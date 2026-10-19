@@ -3,7 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val updateManifestUrl = providers.gradleProperty("updateManifestUrl").orElse("").get()
+val appVersionCode = providers.gradleProperty("appVersionCode").orElse("1").get().toInt()
+val appVersionName = providers.gradleProperty("appVersionName").orElse("1.0.0").get()
+val updateManifestUrl = "https://github.com/tz121212/AI-APP/releases/latest/download/update-manifest.json"
 val releaseStorePath = providers.gradleProperty("releaseStoreFile").orNull
 val releaseStorePassword = providers.gradleProperty("releaseStorePassword").orNull
 val releaseKeyAlias = providers.gradleProperty("releaseKeyAlias").orNull
@@ -19,8 +21,8 @@ android {
         applicationId = "com.dailyassistant.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
         buildConfigField("String", "UPDATE_MANIFEST_URL", "\"$updateManifestUrl\"")
     }
 

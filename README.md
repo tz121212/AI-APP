@@ -36,10 +36,25 @@ gradle assembleDebug
 
 ## GitHub 构建和发布
 
-将项目推送到 GitHub 后，`.github/workflows/android.yml` 会在普通分支构建调试 APK，并在推送 `v*` 标签时构建签名发布包、创建 GitHub Release。发布前在仓库 Secrets 中配置：
+推送普通分支会自动构建调试 APK，文件可在 GitHub 仓库的 Actions 运行记录中下载。正式安装和后续覆盖更新请使用签名发布包。首次发布前，在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 添加以下 Secrets：
 
 - `ANDROID_KEYSTORE_BASE64`：签名密钥文件的 Base64 内容
 - `RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD`：签名信息
-- `UPDATE_MANIFEST_URL`：应用更新清单的 HTTPS 地址
 
-清单格式见 [android/update-manifest.example.json](android/update-manifest.example.json)。更新清单和 APK 应放在内部人员可访问的 HTTPS 地址；不要把 GitHub 私有访问令牌写进 App。递增版本号后推送标签（例如 `v1.1.0`）即可触发正式构建。由于 Android 安装包需要固定签名密钥，首次发布前必须配置签名 Secrets。
+只生成一次长期签名密钥，并妥善备份；后续版本必须使用同一密钥，否则 Android 不允许覆盖安装。安装 JDK 17 后，在项目目录执行以下命令生成密钥：
+
+```powershell
+keytool -genkeypair -v -keystore daily-assistant-release.jks -alias daily-assistant -keyalg RSA -keysize 2048 -validity 10000
+[Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path .\daily-assistant-release.jks)))
+```
+
+将第二条命令输出的 Base64 内容设为 `ANDROID_KEYSTORE_BASE64`，并把生成时设置的密钥库密码、别名 `daily-assistant` 和密钥密码分别设为上述 Secrets。不要将密钥文件或密码提交到 GitHub。示例清单见 [android/update-manifest.example.json](android/update-manifest.example.json)。
+
+首次配置 Secrets 后，推送版本标签即可构建 APK 并创建 Release：
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+手机可从 [最新 APK](https://github.com/tz121212/AI-APP/releases/latest/download/app-release.apk) 下载并安装。App 内的“检查更新”会读取最新 Release 附带的清单，发现新版本后下载 APK 并交给 Android 系统确认安装。以后将版本标签递增为 `v1.0.1`、`v1.1.0` 等即可发布更新；Android 仍会要求用户确认安装。
