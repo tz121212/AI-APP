@@ -73,7 +73,7 @@ jobs:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           test -n "$ANDROID_KEYSTORE_BASE64" || { echo "Missing ANDROID_KEYSTORE_BASE64 secret"; exit 1; }
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/daily-assistant-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/daily-assistant-release.p12"
       - name: Build signed release APK
         working-directory: android
         env:
@@ -85,7 +85,7 @@ jobs:
           test -n "$RELEASE_KEY_ALIAS" || { echo "Missing RELEASE_KEY_ALIAS secret"; exit 1; }
           test -n "$RELEASE_KEY_PASSWORD" || { echo "Missing RELEASE_KEY_PASSWORD secret"; exit 1; }
           gradle --no-daemon assembleRelease \
-            -PreleaseStoreFile="$RUNNER_TEMP/daily-assistant-release.jks" \
+            -PreleaseStoreFile="$RUNNER_TEMP/daily-assistant-release.p12" \
             -PreleaseStorePassword="$RELEASE_STORE_PASSWORD" \
             -PreleaseKeyAlias="$RELEASE_KEY_ALIAS" \
             -PreleaseKeyPassword="$RELEASE_KEY_PASSWORD" \

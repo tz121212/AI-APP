@@ -34,6 +34,7 @@ android {
         create("internalRelease") {
             if (releaseStorePath != null) {
                 storeFile = file(releaseStorePath)
+                storeType = "PKCS12"
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword

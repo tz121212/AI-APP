@@ -44,11 +44,13 @@ gradle assembleDebug
 只生成一次长期签名密钥，并妥善备份；后续版本必须使用同一密钥，否则 Android 不允许覆盖安装。安装 JDK 17 后，在项目目录执行以下命令生成密钥：
 
 ```powershell
-keytool -genkeypair -v -keystore daily-assistant-release.jks -alias daily-assistant -keyalg RSA -keysize 2048 -validity 10000
-[Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path .\daily-assistant-release.jks)))
+keytool -genkeypair -v -storetype PKCS12 -keystore daily-assistant-release.p12 -alias daily-assistant -keyalg RSA -keysize 2048 -validity 10000
+[Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path .\daily-assistant-release.p12)))
 ```
 
 将第二条命令输出的 Base64 内容设为 `ANDROID_KEYSTORE_BASE64`，并把生成时设置的密钥库密码、别名 `daily-assistant` 和密钥密码分别设为上述 Secrets。不要将密钥文件或密码提交到 GitHub。示例清单见 [android/update-manifest.example.json](android/update-manifest.example.json)。
+
+本仓库的签名 Secrets 已完成初始化。本机密钥备份为 `daily-assistant-release.p12`，密码备份为 `daily-assistant-release-password.dpapi`；两者均被 Git 忽略。密码备份受当前 Windows 账户保护。请保留并妥善备份这两个文件，不要重新生成签名密钥，否则已安装的 App 将无法覆盖更新。
 
 首次配置 Secrets 后，推送版本标签即可构建 APK 并创建 Release：
 
