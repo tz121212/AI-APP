@@ -1,0 +1,6 @@
+{
+  "versionCode": 2,
+  "versionName": "1.1.0",
+  "apkUrl": "https://updates.internal.example/daily-assistant/app-release.apk",
+  "changelog": "改进待办提醒和备忘搜索"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "日常 · 备忘与待办",
+  "short_name": "日常",
+  "description": "内部使用的备忘与待办工具",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f7f5",
+  "theme_color": "#f6f8f6",
+  "icons": [
+    { "src": "assets/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
