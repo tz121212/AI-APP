@@ -55,8 +55,8 @@ keytool -genkeypair -v -storetype PKCS12 -keystore daily-assistant-release.p12 -
 首次配置 Secrets 后，推送版本标签即可构建 APK 并创建 Release：
 
 ```powershell
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
-手机可从 [最新 APK](https://github.com/tz121212/AI-APP/releases/latest/download/app-release.apk) 下载并安装。App 内的“检查更新”会读取最新 Release 附带的清单，发现新版本后下载 APK 并交给 Android 系统确认安装。以后将版本标签递增为 `v1.0.1`、`v1.1.0` 等即可发布更新；Android 仍会要求用户确认安装。
+手机可从 [最新 APK](https://github.com/tz121212/AI-APP/releases/latest/download/app-release.apk) 下载并安装。App 内的“检查更新”会读取最新 Release 附带的清单，发现新版本后下载 APK 并交给 Android 系统确认安装。以后将版本标签递增为 `v1.0.2`、`v1.1.0` 等即可发布更新；Android 仍会要求用户确认安装。
