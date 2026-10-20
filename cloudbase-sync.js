@@ -5,7 +5,6 @@
   const TABLE = 'schedule_records';
   const POLL_INTERVAL_MS = 5000;
   const POLL_OVERLAP_MS = 5000;
-  const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   function createScheduleSync({ config, onRecords, onStatus }) {
     const env = String(config?.env || '').trim();
@@ -146,15 +145,15 @@
     }
 
     async function signIn(value, password) {
-      const email = String(value || '').trim().toLowerCase();
-      if (!EMAIL_PATTERN.test(email)) throw new Error('请输入 CloudBase 账号绑定的完整邮箱地址');
+      const username = String(value || '').trim();
+      if (!username) throw new Error('请输入 CloudBase 用户名');
       ensureClient();
-      const result = await auth.signInWithPassword({ email, password });
+      const result = await auth.signInWithPassword({ username, password });
       if (result?.error) throw result.error;
       const session = result?.data?.session;
       if (!session || session.user?.is_anonymous) throw new Error('登录未建立有效账号会话，请检查账号和登录配置');
       const user = session.user || result?.data?.user;
-      account = user?.email || email;
+      account = user?.username || username;
       localStorage.setItem(AUTH_KEY, JSON.stringify({ account }));
       connected = true;
       startPolling();
@@ -240,7 +239,7 @@
           return;
         }
         const user = session.user;
-        account = user.email || account;
+        account = user.username || account || user.email || '';
         if (account) localStorage.setItem(AUTH_KEY, JSON.stringify({ account }));
         connected = true;
         startPolling();
@@ -269,7 +268,7 @@
         const displayMessage = /cloudbase fetch and xhr failed/i.test(message)
           ? 'Android WebView 的 fetch 和 XHR 都无法连接 CloudBase。请切换手机 Wi-Fi/移动网络后重试；如仍失败，请检查手机网络是否能访问腾讯云开发。'
           : /failed to fetch|networkerror|load failed/i.test(message)
-            ? '无法连接 CloudBase 邮箱认证服务（Failed to fetch）。请检查手机网络是否能访问腾讯云开发。账号密码错误会显示具体认证错误。'
+            ? '无法连接 CloudBase 用户名认证服务（Failed to fetch）。请检查手机网络是否能访问腾讯云开发。账号密码错误会显示具体认证错误。'
             : message;
         setStatus(displayMessage);
         throw new Error(displayMessage);
@@ -321,7 +320,7 @@
       connect,
       disconnect,
       deviceId: () => deviceId,
-      email: () => account,
+      username: () => account,
       flushPending,
       refresh,
       resume,

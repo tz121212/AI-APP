@@ -98,12 +98,12 @@ test('logs in, reads PostgreSQL schedule rows, and upserts a changed record', as
     onRecords: (records, initial) => snapshots.push({ records, initial })
   });
 
-  await sync.connect('sync@example.com', 'not-a-real-password');
+  await sync.connect(' sync-user ', 'not-a-real-password');
   assert.deepEqual(cloudbaseConfig, {
     env: 'test-env-123', region: 'ap-shanghai', accessKey: 'test-publishable-key', endPointMode: 'CLOUD_API'
   });
-  assert.deepEqual(credentials, { email: 'sync@example.com', password: 'not-a-real-password' });
-  assert.deepEqual(JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), { account: 'sync@example.com' });
+  assert.deepEqual(credentials, { username: 'sync-user', password: 'not-a-real-password' });
+  assert.deepEqual(JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), { account: 'sync-user' });
   assert.equal('password' in JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), false);
   assert.equal(snapshots.at(-1).records['2026-10-20_军'].off, true);
   assert.equal(snapshots.at(-1).initial, true);
@@ -117,16 +117,16 @@ test('logs in, reads PostgreSQL schedule rows, and upserts a changed record', as
   assert.deepEqual(JSON.parse(storage.get('daily-assistant-sync-pending-v1')), {});
 });
 
-test('uses the bound email login and explains fetch failures as connectivity problems', async (t) => {
+test('uses a username login and explains fetch failures as connectivity problems', async (t) => {
   let sync;
   t.after(() => sync?.disconnect());
   sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
-  await assert.rejects(sync.connect('sync-user', 'not-a-real-password'), /完整邮箱地址/);
+  await assert.rejects(sync.connect('   ', 'not-a-real-password'), /请输入 CloudBase 用户名/);
   assert.equal(cloudbaseConfig, null);
 
   failedLogin = new Error('Failed to fetch');
-  await assert.rejects(sync.connect('SYNC@example.com', 'not-a-real-password'), /检查手机网络/);
-  assert.deepEqual(credentials, { email: 'sync@example.com', password: 'not-a-real-password' });
+  await assert.rejects(sync.connect('sync-user', 'not-a-real-password'), /检查手机网络/);
+  assert.deepEqual(credentials, { username: 'sync-user', password: 'not-a-real-password' });
 });
 
 test('resumes a saved session and queues local rows until the first PostgreSQL read', async (t) => {
@@ -141,6 +141,7 @@ test('resumes a saved session and queues local rows until the first PostgreSQL r
 
   await sync.resume();
   await sync.flushPending();
+  assert.equal(sync.username(), 'sync-user');
   assert.equal(writes.at(-1).key, '2026-10-22_军');
   assert.equal(JSON.parse(storage.get('daily-assistant-sync-pending-v1'))['2026-10-22_军'], undefined);
 });
@@ -168,7 +169,7 @@ test('pulls another device update on the next refresh', async (t) => {
     config: { env: 'test-env-123', accessKey: 'test-publishable-key' },
     onRecords: (records, initial) => snapshots.push({ records, initial })
   });
-  await sync.connect('sync@example.com', 'not-a-real-password');
+  await sync.connect('sync-user', 'not-a-real-password');
   remoteRows.set('2026-10-23_震', {
     date: '2026-10-23', person: '震', off: true, client_updated_at: 900,
     updated_at: new Date().toISOString(), device_id: 'device-b'
@@ -184,7 +185,7 @@ test('retains queued records after an upsert failure and retries after a later r
   let sync;
   t.after(() => sync?.disconnect());
   sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
-  await sync.connect('sync@example.com', 'not-a-real-password');
+  await sync.connect('sync-user', 'not-a-real-password');
   failedWrites = 1;
   sync.writeRecord('2026-10-24_震', { date: '2026-10-24', person: '震', off: true, updatedAt: 1000, deviceId: 'device-a' });
   await sync.flushPending();
