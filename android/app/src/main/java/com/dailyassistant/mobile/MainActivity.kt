@@ -311,7 +311,8 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        const val CHANNEL_ID = "daily_reminders"
+        const val CHANNEL_ID = "daily_alarm_reminders_v2"
+        const val UPDATE_CHANNEL_ID = "daily_update_downloads"
         const val EXTRA_TASK_ID = "task_id"
         const val EXTRA_TASK_TITLE = "task_title"
         const val EXTRA_TASK_BODY = "task_body"
@@ -330,8 +331,26 @@ class MainActivity : Activity() {
         fun createReminderChannel(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val manager = context.getSystemService(NotificationManager::class.java)
-                val channel = android.app.NotificationChannel(CHANNEL_ID, "待办提醒", android.app.NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "日常待办到期提醒"
+                val alarmSound = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
+                val audioAttributes = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                val channel = android.app.NotificationChannel(CHANNEL_ID, "待办闹钟", android.app.NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "日常待办到期闹钟提醒"
+                    setSound(alarmSound, audioAttributes)
+                    enableVibration(true)
+                    vibrationPattern = longArrayOf(0, 500, 300, 500, 300, 1000)
+                }
+                manager.createNotificationChannel(channel)
+            }
+        }
+
+        fun createUpdateChannel(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val manager = context.getSystemService(NotificationManager::class.java)
+                val channel = android.app.NotificationChannel(UPDATE_CHANNEL_ID, "应用更新", android.app.NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = "应用更新包下载完成提醒"
                 }
                 manager.createNotificationChannel(channel)
             }

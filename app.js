@@ -14,6 +14,7 @@
   let scheduleSync = null;
   let scheduleSyncStatus = window.CLOUDBASE_SYNC_CONFIG?.env ? '尚未连接云端' : '云端服务尚未配置';
   const browserReminderTimers = new Map();
+  const HISTORY_RETENTION_MONTHS = 1;
 
   const root = document.getElementById('view-root');
   const dialog = document.getElementById('editor-dialog');
@@ -113,6 +114,44 @@
 
   function persist() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function historyCutoffTimestamp(now = new Date()) {
+    const cutoff = new Date(now);
+    cutoff.setMonth(cutoff.getMonth() - HISTORY_RETENTION_MONTHS);
+    return cutoff.getTime();
+  }
+
+  function parseTimestamp(value) {
+    const timestamp = Date.parse(value || '');
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  }
+
+  function taskHistoryTimestamp(task) {
+    if (task.completed) return parseTimestamp(task.completedAt || task.updatedAt || task.createdAt);
+    if (task.dueDate) {
+      const dueTimestamp = Date.parse(`${task.dueDate}T${task.dueTime || '23:59'}:00`);
+      if (Number.isFinite(dueTimestamp) && dueTimestamp < Date.now()) return dueTimestamp;
+    }
+    return parseTimestamp(task.updatedAt || task.createdAt);
+  }
+
+  function cleanupExpiredHistory() {
+    const cutoff = historyCutoffTimestamp();
+    const expiredTaskIds = state.tasks
+      .filter((task) => task && task.id && taskHistoryTimestamp(task) > 0 && taskHistoryTimestamp(task) < cutoff)
+      .map((task) => String(task.id));
+    expiredTaskIds.forEach((taskId) => removeReminder(taskId));
+    const beforeTasks = state.tasks.length;
+    const beforeNotes = state.notes.length;
+    state.tasks = state.tasks.filter((task) => !expiredTaskIds.includes(String(task?.id)));
+    state.notes = state.notes.filter((note) => {
+      const timestamp = parseTimestamp(note?.updatedAt || note?.createdAt);
+      return !timestamp || timestamp >= cutoff;
+    });
+    const removed = beforeTasks - state.tasks.length + beforeNotes - state.notes.length;
+    if (removed) persist();
+    return removed;
   }
 
   function mergeScheduleRecords(remoteRecords) {
@@ -346,7 +385,7 @@
     root.innerHTML = `<div class="settings-view">
       <section class="settings-section"><h2>排班同步</h2><p>只同步军、震的休息安排。两台设备使用同一个 CloudBase 账号，应用打开时约每 5 秒检查一次更新；返回应用时会立即同步。</p><p class="sync-status-line" data-schedule-sync-status aria-live="polite">${escapeHTML(scheduleSyncStatus)}</p><form class="sync-form" id="schedule-sync-form"><label class="field-grow"><span class="field-label">共享账号</span><input class="text-field" name="email" type="text" autocomplete="username" value="${escapeHTML(scheduleSync?.email() || '')}" required ${syncConfigured ? '' : 'disabled'} /></label><label class="field-grow"><span class="field-label">账号密码</span><input class="text-field" name="password" type="password" autocomplete="current-password" required ${syncConfigured ? '' : 'disabled'} /></label><button class="primary-button" type="submit" ${syncConfigured ? '' : 'disabled'}><i data-lucide="cloud"></i>连接同步</button></form><div class="settings-actions"><button class="secondary-button" type="button" data-action="disconnect-schedule-sync" ${scheduleSync?.email() ? '' : 'disabled'}><i data-lucide="cloud-off"></i>断开同步</button></div></section>
       <section class="settings-section"><h2>数据备份</h2><p>备忘和待办只保存在当前设备。你可以导出 JSON 文件留存，或从备份文件恢复。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="export"><i data-lucide="download"></i>导出数据</button><button class="secondary-button" type="button" data-action="import"><i data-lucide="upload"></i>导入备份</button></div></section>
-      <section class="settings-section"><h2>提醒通知</h2><p>可在待办中单独开启闹钟提醒。首次开启时，请允许通知权限。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="request-notification"><i data-lucide="bell-ring"></i>开启通知权限</button></div></section>
+      <section class="settings-section"><h2>提醒通知</h2><p>可在待办中单独开启闹钟提醒。到点会响铃，通知会一直保留到待办完成或取消。首次开启时，请允许通知权限。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="request-notification"><i data-lucide="bell-ring"></i>开启通知权限</button></div></section>
       <section class="settings-section"><h2>应用更新</h2><p>检查内部发布的 Android 版本。安装更新时，系统会显示安装确认。</p><div class="settings-version"><span>当前版本</span><strong>${escapeHTML(version)}</strong></div><div class="settings-actions"><button class="secondary-button" type="button" data-action="check-update"><i data-lucide="refresh-cw"></i>检查更新</button></div></section>
       <section class="settings-section"><h2>本机数据</h2><p>清除当前设备的备忘和待办，并清除共享休息安排。此操作无法撤销。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="clear-data"><i data-lucide="trash-2"></i>清除所有数据</button></div></section>
     </div>`;
@@ -410,7 +449,7 @@
     const canEnable = Boolean(form.elements.dueDate.value && form.elements.dueTime.value);
     reminderCheckbox.disabled = !canEnable;
     if (!canEnable) reminderCheckbox.checked = false;
-    document.getElementById('reminder-help').textContent = canEnable ? '到期时通过系统通知提醒' : '选择日期和时间后可开启';
+    document.getElementById('reminder-help').textContent = canEnable ? '到点响铃，并保持通知直到完成待办' : '选择日期和时间后可开启';
   }
 
   function updateReminder(task) {
@@ -466,15 +505,19 @@
     task.completed = checked;
     task.updatedAt = new Date().toISOString();
     if (checked) {
+      task.completedAt = task.updatedAt;
       removeReminder(task.id);
       const nextDate = reminderDate(task, 1);
       if (nextDate) {
-        const nextTask = { ...task, id: newId(), dueDate: nextDate, completed: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        const nextTask = { ...task, id: newId(), dueDate: nextDate, completed: false, completedAt: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
         state.tasks.push(nextTask);
         updateReminder(nextTask);
         showToast(`已完成，下次安排在${formatDate(nextDate)}`);
       }
-    } else updateReminder(task);
+    } else {
+      task.completedAt = null;
+      updateReminder(task);
+    }
     persist();
     render();
   }
@@ -502,6 +545,7 @@
         repeat: form.elements.dueDate.value ? form.elements.repeat.value : 'none',
         reminderEnabled,
         completed: existing?.completed || false,
+        completedAt: existing?.completed ? existing?.completedAt || null : null,
         createdAt: existing?.createdAt || now, updatedAt: now
       };
       if (existing) Object.assign(existing, task);
@@ -753,6 +797,8 @@
     window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(() => {}));
   }
   state.tasks.forEach(updateReminder);
+  cleanupExpiredHistory();
+  window.setInterval(cleanupExpiredHistory, 6 * 60 * 60 * 1000);
   scheduleSync?.resume();
   render();
   if (window.AndroidBridge?.isUpdateConfigured?.()) window.setTimeout(() => window.AndroidBridge.checkForUpdates(), 1400);

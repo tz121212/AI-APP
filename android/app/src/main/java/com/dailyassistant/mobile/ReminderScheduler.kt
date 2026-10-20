@@ -11,7 +11,12 @@ object ReminderScheduler {
     fun schedule(context: Context, id: String, title: String, body: String, triggerAt: Long, repeat: String) {
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val pending = reminderIntent(context, id, title, body, repeat)
-        manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, maxOf(triggerAt, System.currentTimeMillis() + 1000), pending)
+        val trigger = maxOf(triggerAt, System.currentTimeMillis() + 1000)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && manager.canScheduleExactAlarms()) {
+            manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pending)
+        } else {
+            manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pending)
+        }
         val saved = JSONObject().apply {
             put("id", id)
             put("title", title)
@@ -27,6 +32,7 @@ object ReminderScheduler {
         val pending = PendingIntent.getBroadcast(context, id.hashCode() and 0x7fffffff, Intent(context, ReminderReceiver::class.java), flags())
         manager.cancel(pending)
         pending.cancel()
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(id.hashCode())
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().remove(id).apply()
     }
 

@@ -21,7 +21,7 @@ class UpdateDownloadReceiver : BroadcastReceiver() {
             if (status != DownloadManager.STATUS_SUCCESSFUL) return
         }
 
-        MainActivity.createReminderChannel(context)
+        MainActivity.createUpdateChannel(context)
         val install = Intent(context, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra(MainActivity.EXTRA_INSTALL_DOWNLOAD_ID, downloadId)
@@ -33,7 +33,7 @@ class UpdateDownloadReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
         )
         val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(context, MainActivity.CHANNEL_ID)
+            Notification.Builder(context, MainActivity.UPDATE_CHANNEL_ID)
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(context)

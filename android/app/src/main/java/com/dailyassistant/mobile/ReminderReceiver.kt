@@ -29,7 +29,12 @@ class ReminderReceiver : BroadcastReceiver() {
         }.setSmallIcon(android.R.drawable.ic_menu_my_calendar)
             .setContentTitle(title)
             .setContentText(body)
-            .setAutoCancel(true)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setCategory(Notification.CATEGORY_ALARM)
+            .setPriority(Notification.PRIORITY_HIGH)
+            .setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM))
+            .setVibrate(longArrayOf(0, 500, 300, 500, 300, 1000))
             .setContentIntent(openApp)
             .build()
 
