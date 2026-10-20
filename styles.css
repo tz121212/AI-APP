@@ -146,18 +146,35 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .calendar-arrow { width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: #607068; }
 .calendar-arrow:hover { color: var(--green); border-color: #b9cdc2; }
 .calendar-arrow svg { width: 15px; height: 15px; }
+.calendar-scheduler { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+.calendar-scheduler-label { color: #718077; font-size: 11px; }
+.scheduler-people { display: inline-flex; gap: 3px; padding: 3px; border-radius: 6px; background: #edf2ee; }
+.scheduler-person { min-width: 43px; min-height: 29px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: #65736a; cursor: pointer; font-size: 11px; }
+.scheduler-person.active { background: #fff; color: var(--green-dark); box-shadow: 0 1px 3px rgba(20, 50, 35, .1); font-weight: 650; }
 .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
 .weekday { padding: 8px 2px; color: #859189; text-align: center; font-size: 10px; }
-.day-cell { position: relative; min-width: 0; aspect-ratio: 1 / .84; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #39463f; cursor: pointer; font-size: 12px; }
+.day-cell { position: relative; min-width: 0; aspect-ratio: 1 / .84; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #39463f; cursor: pointer; font-size: 12px; }
 .day-cell:hover { background: #fff; }
 .day-cell.outside { color: #b4bdb7; }
 .day-cell.today { color: var(--green-dark); font-weight: 700; }
 .day-cell.selected { border-color: #aecabb; background: #e9f3ee; color: var(--green-dark); font-weight: 700; }
+.day-rest-tags { min-height: 10px; display: flex; align-items: center; gap: 2px; }
+.day-rest-tag { min-width: 11px; padding: 1px 2px; border-radius: 3px; background: #e5f1ea; color: #28704f; font-size: 8px; line-height: 1.1; font-weight: 650; }
+.day-rest-tag[data-person="震"] { background: #fff0dd; color: #a85c16; }
 .day-dots { display: flex; gap: 3px; height: 5px; }
 .day-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--green); }
 .day-dot.note-dot { background: var(--orange); }
 .calendar-side { padding-left: 26px; border-left: 1px solid var(--line); }
 .selected-date-heading { margin: 0 0 14px; font-size: 14px; font-weight: 650; }
+.calendar-schedule { padding: 0 0 15px; margin-bottom: 2px; border-bottom: 1px solid var(--line); }
+.calendar-section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.calendar-section-title h4 { margin: 0; font-size: 12px; font-weight: 650; }
+.calendar-section-title span, .schedule-empty { color: var(--muted); font-size: 10px; }
+.schedule-person-list { min-height: 21px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.schedule-person-tag { padding: 4px 7px; border-radius: 4px; background: #e5f1ea; color: #28704f; font-size: 10px; font-weight: 600; }
+.schedule-person-tag[data-person="震"] { background: #fff0dd; color: #a85c16; }
+.schedule-toggle { min-height: 33px; margin-top: 11px; font-size: 10px; }
+.schedule-toggle svg { width: 14px; height: 14px; }
 .calendar-agenda { border-top: 1px solid var(--line); }
 .agenda-empty { padding: 19px 0; color: var(--muted); font-size: 12px; }
 .agenda-note { margin-top: 21px; padding-top: 15px; border-top: 1px solid var(--line); }
@@ -265,6 +282,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .notes-grid .note-card h3 { font-size: 12px; }
   .calendar-layout { grid-template-columns: 1fr; gap: 28px; }
   .calendar-header { margin-bottom: 13px; }
+  .calendar-scheduler { margin-bottom: 9px; }
   .calendar-grid { gap: 2px; }
   .day-cell { aspect-ratio: 1 / .88; font-size: 11px; }
   .weekday { font-size: 9px; }

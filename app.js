@@ -1,5 +1,6 @@
 (() => {
   const STORAGE_KEY = 'daily-assistant-data-v1';
+  const SCHEDULE_PEOPLE = ['军', '震'];
   const today = toDateKey(new Date());
   const state = loadState();
   let activeView = 'today';
@@ -8,6 +9,7 @@
   let calendarMonth = new Date();
   calendarMonth.setDate(1);
   let selectedDate = today;
+  let schedulePerson = SCHEDULE_PEOPLE[0];
   let showCompleted = false;
   const browserReminderTimers = new Map();
 
@@ -30,6 +32,23 @@
     return new Date(year, month - 1, day);
   }
 
+  function isValidDateKey(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false;
+    return toDateKey(fromDateKey(value)) === value;
+  }
+
+  function normalizeDaysOff(items) {
+    if (!Array.isArray(items)) return [];
+    const seen = new Set();
+    return items.filter((item) => {
+      if (!item || !isValidDateKey(item.date) || !SCHEDULE_PEOPLE.includes(item.person)) return false;
+      const key = `${item.date}:${item.person}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).map((item) => ({ date: item.date, person: item.person }));
+  }
+
   function escapeHTML(value = '') {
     return String(value).replace(/[&<>"']/g, (char) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -41,10 +60,11 @@
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
       return {
         tasks: Array.isArray(saved.tasks) ? saved.tasks : [],
-        notes: Array.isArray(saved.notes) ? saved.notes : []
+        notes: Array.isArray(saved.notes) ? saved.notes : [],
+        daysOff: normalizeDaysOff(saved.daysOff)
       };
     } catch {
-      return { tasks: [], notes: [] };
+      return { tasks: [], notes: [], daysOff: [] };
     }
   }
 
@@ -204,19 +224,26 @@
       const key = toDateKey(day);
       const dayTasks = state.tasks.filter((task) => task.dueDate === key && !task.completed);
       const hasNotes = state.notes.some((note) => (note.createdAt || '').slice(0, 10) === key);
+      const dayOffPeople = SCHEDULE_PEOPLE.filter((person) => state.daysOff.some((item) => item.date === key && item.person === person));
+      const restTags = dayOffPeople.map((person) => `<span class="day-rest-tag" data-person="${person}">${person}</span>`).join('');
       const dots = `${dayTasks.length ? '<span class="day-dot"></span>' : ''}${hasNotes ? '<span class="day-dot note-dot"></span>' : ''}`;
-      return `<button type="button" class="day-cell ${day.getMonth() !== month ? 'outside' : ''} ${key === today ? 'today' : ''} ${key === selectedDate ? 'selected' : ''}" data-action="select-date" data-date="${key}" aria-label="${formatDate(key, { year: 'numeric', month: 'long', day: 'numeric' })}${dayTasks.length ? `，${dayTasks.length} 个待办` : ''}"><span>${day.getDate()}</span><span class="day-dots">${dots}</span></button>`;
+      const restDescription = dayOffPeople.map((person) => `${person}休息`).join('，');
+      return `<button type="button" class="day-cell ${day.getMonth() !== month ? 'outside' : ''} ${key === today ? 'today' : ''} ${key === selectedDate ? 'selected' : ''}" data-action="select-date" data-date="${key}" aria-label="${formatDate(key, { year: 'numeric', month: 'long', day: 'numeric' })}${dayTasks.length ? `，${dayTasks.length} 个待办` : ''}${restDescription ? `，${restDescription}` : ''}"><span>${day.getDate()}</span><span class="day-rest-tags">${restTags}</span><span class="day-dots">${dots}</span></button>`;
     }).join('');
     const agendaTasks = sortTasks(state.tasks.filter((task) => task.dueDate === selectedDate));
     const agendaNotes = sortedNotes(state.notes.filter((note) => (note.createdAt || '').slice(0, 10) === selectedDate));
+    const selectedDayOffs = SCHEDULE_PEOPLE.filter((person) => state.daysOff.some((item) => item.date === selectedDate && item.person === person));
+    const selectedPersonIsOff = selectedDayOffs.includes(schedulePerson);
     const selected = fromDateKey(selectedDate);
     const selectedLabel = selected ? new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(selected) : '';
 
     root.innerHTML = `<div class="calendar-layout">
       <section class="calendar-panel"><div class="calendar-header"><h2>${monthLabel(calendarMonth)}</h2><div class="calendar-nav"><button class="calendar-arrow" type="button" data-action="prev-month" aria-label="上个月"><i data-lucide="chevron-left"></i></button><button class="calendar-arrow" type="button" data-action="next-month" aria-label="下个月"><i data-lucide="chevron-right"></i></button></div></div>
+        <div class="calendar-scheduler"><span class="calendar-scheduler-label">排班人员</span><div class="scheduler-people" role="group" aria-label="选择排班人员">${SCHEDULE_PEOPLE.map((person) => `<button class="scheduler-person ${schedulePerson === person ? 'active' : ''}" type="button" data-action="schedule-person" data-person="${person}" aria-pressed="${schedulePerson === person}">${person}</button>`).join('')}</div></div>
         <div class="calendar-grid" role="grid" aria-label="${monthLabel(calendarMonth)}"><div class="weekday">一</div><div class="weekday">二</div><div class="weekday">三</div><div class="weekday">四</div><div class="weekday">五</div><div class="weekday">六</div><div class="weekday">日</div>${days}</div>
       </section>
       <aside class="calendar-side"><h3 class="selected-date-heading">${selectedLabel}</h3>
+        <section class="calendar-schedule" aria-label="休息排班"><div class="calendar-section-title"><h4>休息安排</h4><span>只记录休息日</span></div><div class="schedule-person-list">${selectedDayOffs.length ? selectedDayOffs.map((person) => `<span class="schedule-person-tag" data-person="${person}">${person}休息</span>`).join('') : '<span class="schedule-empty">暂无休息安排</span>'}</div><button class="secondary-button schedule-toggle" type="button" data-action="toggle-day-off" data-date="${selectedDate}" data-person="${schedulePerson}"><i data-lucide="coffee"></i>${selectedPersonIsOff ? `取消${schedulePerson}休息` : `安排${schedulePerson}休息`}</button></section>
         <div class="calendar-agenda">${agendaTasks.length ? agendaTasks.map((task) => taskRow(task, true)).join('') : `<div class="agenda-empty">这一天没有待办</div>`}</div>
         <button class="small-action" type="button" data-action="new-task" data-date="${selectedDate}"><i data-lucide="plus"></i>添加到这一天</button>
         ${agendaNotes.length ? `<div class="agenda-note"><h3>当天备忘 · ${agendaNotes.length}</h3><div class="note-list">${agendaNotes.map((note) => noteCard(note, true)).join('')}</div></div>` : ''}
@@ -240,10 +267,10 @@
     setHeader('设置与备份', '应用信息');
     const version = window.AndroidBridge?.getAppVersion?.() || '网页预览版';
     root.innerHTML = `<div class="settings-view">
-      <section class="settings-section"><h2>数据备份</h2><p>备忘和待办只保存在当前设备。你可以导出 JSON 文件留存，或从备份文件恢复。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="export"><i data-lucide="download"></i>导出数据</button><button class="secondary-button" type="button" data-action="import"><i data-lucide="upload"></i>导入备份</button></div></section>
+      <section class="settings-section"><h2>数据备份</h2><p>备忘、待办和休息安排只保存在当前设备。你可以导出 JSON 文件留存，或从备份文件恢复。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="export"><i data-lucide="download"></i>导出数据</button><button class="secondary-button" type="button" data-action="import"><i data-lucide="upload"></i>导入备份</button></div></section>
       <section class="settings-section"><h2>提醒通知</h2><p>Android 版本会通过系统通知提醒到期事项。首次使用时，请允许通知权限。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="request-notification"><i data-lucide="bell-ring"></i>开启通知权限</button></div></section>
       <section class="settings-section"><h2>应用更新</h2><p>检查内部发布的 Android 版本。安装更新时，系统会显示安装确认。</p><div class="settings-version"><span>当前版本</span><strong>${escapeHTML(version)}</strong></div><div class="settings-actions"><button class="secondary-button" type="button" data-action="check-update"><i data-lucide="refresh-cw"></i>检查更新</button></div></section>
-      <section class="settings-section"><h2>本机数据</h2><p>清除当前设备保存的全部备忘与待办。此操作无法撤销。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="clear-data"><i data-lucide="trash-2"></i>清除所有数据</button></div></section>
+      <section class="settings-section"><h2>本机数据</h2><p>清除当前设备保存的全部备忘、待办与休息安排。此操作无法撤销。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="clear-data"><i data-lucide="trash-2"></i>清除所有数据</button></div></section>
     </div>`;
     updateNavigation();
     refreshIcons();
@@ -446,10 +473,12 @@
     try {
       const backup = JSON.parse(content);
       if (!Array.isArray(backup.tasks) || !Array.isArray(backup.notes)) throw new Error('格式不正确');
-      if (!window.confirm(`备份包含 ${backup.tasks.length} 项待办和 ${backup.notes.length} 条备忘。导入会替换本机现有数据。`)) return;
+      const daysOff = normalizeDaysOff(backup.daysOff);
+      if (!window.confirm(`备份包含 ${backup.tasks.length} 项待办、${backup.notes.length} 条备忘和 ${daysOff.length} 条休息安排。导入会替换本机现有数据。`)) return;
       state.tasks.forEach((task) => removeReminder(task.id));
       state.tasks = backup.tasks.filter((item) => item && item.id && item.title).map((item) => ({ ...item, id: String(item.id), title: String(item.title).slice(0, 100) }));
       state.notes = backup.notes.filter((item) => item && item.id && item.title).map((item) => ({ ...item, id: String(item.id), title: String(item.title).slice(0, 100) }));
+      state.daysOff = daysOff;
       persist();
       state.tasks.forEach(updateReminder);
       render();
@@ -474,7 +503,27 @@
       const { action, id } = actionTarget.dataset;
       if (action === 'new-task') openEditor('task', null, actionTarget.dataset.date || (activeView === 'calendar' ? selectedDate : ''));
       else if (action === 'new-note') openEditor('note');
-      else if (action === 'edit-entry') {
+      else if (action === 'schedule-person') {
+        if (SCHEDULE_PEOPLE.includes(actionTarget.dataset.person)) {
+          schedulePerson = actionTarget.dataset.person;
+          renderCalendar();
+        }
+      } else if (action === 'toggle-day-off') {
+        const date = actionTarget.dataset.date;
+        const person = actionTarget.dataset.person;
+        if (isValidDateKey(date) && SCHEDULE_PEOPLE.includes(person)) {
+          const existingIndex = state.daysOff.findIndex((item) => item.date === date && item.person === person);
+          if (existingIndex >= 0) {
+            state.daysOff.splice(existingIndex, 1);
+            showToast(`已取消${person}的休息安排`);
+          } else {
+            state.daysOff.push({ date, person });
+            showToast(`已安排${person}休息`);
+          }
+          persist();
+          renderCalendar();
+        }
+      } else if (action === 'edit-entry') {
         const collection = actionTarget.dataset.kind === 'task' ? state.tasks : state.notes;
         const entry = collection.find((item) => item.id === id);
         if (entry) openEditor(actionTarget.dataset.kind, entry);
@@ -499,10 +548,11 @@
         else document.getElementById('import-file').click();
       }
       else if (action === 'clear-data') {
-        if (window.confirm('清除本机全部备忘和待办？此操作无法撤销。')) {
+        if (window.confirm('清除本机全部备忘、待办和休息安排？此操作无法撤销。')) {
           state.tasks.forEach((task) => removeReminder(task.id));
           state.tasks = [];
           state.notes = [];
+          state.daysOff = [];
           persist();
           render();
           showToast('本机数据已清除');
