@@ -65,9 +65,13 @@ android {
     sourceSets.getByName("main").assets.srcDir(generatedWebAssets)
 }
 
+dependencies {
+    implementation("androidx.webkit:webkit:1.12.1")
+}
+
 val copyWebAssets by tasks.registering(Copy::class) {
     from(webSource) {
-        include("index.html", "styles.css", "app.js", "manifest.webmanifest", "service-worker.js", "assets/**")
+        include("index.html", "styles.css", "app.js", "firebase-config.js", "firebase-sync.js", "manifest.webmanifest", "service-worker.js", "assets/**")
     }
     into(generatedWebAssets.map { it.dir("web") })
 }

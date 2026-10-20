@@ -11,6 +11,8 @@
   let selectedDate = today;
   let schedulePerson = SCHEDULE_PEOPLE[0];
   let showCompleted = false;
+  let scheduleSync = null;
+  let scheduleSyncStatus = window.FIREBASE_SYNC_CONFIG?.apiKey && window.FIREBASE_SYNC_CONFIG?.databaseURL ? '尚未连接云端' : '云端服务尚未配置';
   const browserReminderTimers = new Map();
 
   const root = document.getElementById('view-root');
@@ -49,6 +51,46 @@
     }).map((item) => ({ date: item.date, person: item.person }));
   }
 
+  function scheduleKey(date, person) {
+    return `${date}_${person}`;
+  }
+
+  function normalizeScheduleRecords(records, daysOff = []) {
+    const result = {};
+    if (records && typeof records === 'object' && !Array.isArray(records)) {
+      Object.entries(records).forEach(([key, value]) => {
+        const separator = key.indexOf('_');
+        if (separator < 0 || !value || typeof value !== 'object') return;
+        const date = key.slice(0, separator);
+        const person = key.slice(separator + 1);
+        if (!isValidDateKey(date) || !SCHEDULE_PEOPLE.includes(person) || typeof value.off !== 'boolean') return;
+        result[key] = {
+          date,
+          person,
+          off: value.off,
+          updatedAt: Number.isFinite(Number(value.updatedAt)) ? Number(value.updatedAt) : 0,
+          deviceId: String(value.deviceId || '')
+        };
+      });
+    }
+    normalizeDaysOff(daysOff).forEach((item) => {
+      const key = scheduleKey(item.date, item.person);
+      if (!result[key]) result[key] = { ...item, off: true, updatedAt: 0, deviceId: '' };
+    });
+    return result;
+  }
+
+  function activeDaysOff(records) {
+    return Object.values(records).filter((record) => record.off).map(({ date, person }) => ({ date, person }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.person.localeCompare(b.person));
+  }
+
+  function compareScheduleRecords(left, right) {
+    const timestampDifference = left.updatedAt - right.updatedAt;
+    if (timestampDifference) return timestampDifference;
+    return left.deviceId.localeCompare(right.deviceId);
+  }
+
   function escapeHTML(value = '') {
     return String(value).replace(/[&<>"']/g, (char) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -61,15 +103,44 @@
       return {
         tasks: Array.isArray(saved.tasks) ? saved.tasks : [],
         notes: Array.isArray(saved.notes) ? saved.notes : [],
-        daysOff: normalizeDaysOff(saved.daysOff)
+        daysOff: normalizeDaysOff(saved.daysOff),
+        scheduleRecords: normalizeScheduleRecords(saved.scheduleRecords, saved.daysOff)
       };
     } catch {
-      return { tasks: [], notes: [], daysOff: [] };
+      return { tasks: [], notes: [], daysOff: [], scheduleRecords: {} };
     }
   }
 
   function persist() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function mergeScheduleRecords(remoteRecords) {
+    const incoming = normalizeScheduleRecords(remoteRecords);
+    const merged = { ...state.scheduleRecords };
+    const publish = [];
+    Object.entries(incoming).forEach(([key, remote]) => {
+      const local = merged[key];
+      if (!local || compareScheduleRecords(local, remote) <= 0) merged[key] = remote;
+      else publish.push([key, local]);
+    });
+    Object.entries(merged).forEach(([key, local]) => {
+      if (!Object.prototype.hasOwnProperty.call(incoming, key)) publish.push([key, local]);
+    });
+    state.scheduleRecords = merged;
+    state.daysOff = activeDaysOff(merged);
+    persist();
+    publish.forEach(([key, record]) => scheduleSync?.writeRecord(key, record));
+    if (activeView === 'calendar') renderCalendar();
+  }
+
+  function setScheduleRecord(date, person, off) {
+    const key = scheduleKey(date, person);
+    const record = { date, person, off, updatedAt: Date.now(), deviceId: scheduleSync?.deviceId() || '' };
+    state.scheduleRecords[key] = record;
+    state.daysOff = activeDaysOff(state.scheduleRecords);
+    persist();
+    scheduleSync?.writeRecord(key, record);
   }
 
   function newId() {
@@ -244,7 +315,7 @@
 
     root.innerHTML = `<div class="calendar-layout">
       <section class="calendar-panel"><div class="calendar-header"><h2>${monthLabel(calendarMonth)}</h2><div class="calendar-nav"><button class="calendar-arrow" type="button" data-action="prev-month" aria-label="上个月"><i data-lucide="chevron-left"></i></button><button class="calendar-arrow" type="button" data-action="next-month" aria-label="下个月"><i data-lucide="chevron-right"></i></button></div></div>
-        <div class="calendar-scheduler"><span class="calendar-scheduler-label">排班人员</span><div class="scheduler-people" role="group" aria-label="选择排班人员">${SCHEDULE_PEOPLE.map((person) => `<button class="scheduler-person ${schedulePerson === person ? 'active' : ''}" type="button" data-action="schedule-person" data-person="${person}" aria-pressed="${schedulePerson === person}">${person}</button>`).join('')}</div></div>
+        <div class="calendar-scheduler"><span class="calendar-scheduler-label">排班人员</span><div class="scheduler-people" role="group" aria-label="选择排班人员">${SCHEDULE_PEOPLE.map((person) => `<button class="scheduler-person ${schedulePerson === person ? 'active' : ''}" type="button" data-action="schedule-person" data-person="${person}" aria-pressed="${schedulePerson === person}">${person}</button>`).join('')}</div><span class="calendar-sync-status" data-schedule-sync-status aria-live="polite">${escapeHTML(scheduleSyncStatus)}</span></div>
         <div class="calendar-grid" role="grid" aria-label="${monthLabel(calendarMonth)}"><div class="weekday">一</div><div class="weekday">二</div><div class="weekday">三</div><div class="weekday">四</div><div class="weekday">五</div><div class="weekday">六</div><div class="weekday">日</div>${days}</div>
       </section>
       <aside class="calendar-side"><h3 class="selected-date-heading">${selectedLabel}</h3>
@@ -271,11 +342,13 @@
   function renderSettings() {
     setHeader('设置与备份', '应用信息');
     const version = window.AndroidBridge?.getAppVersion?.() || '网页预览版';
+    const syncConfigured = Boolean(scheduleSync?.configured);
     root.innerHTML = `<div class="settings-view">
-      <section class="settings-section"><h2>数据备份</h2><p>备忘、待办和休息安排只保存在当前设备。你可以导出 JSON 文件留存，或从备份文件恢复。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="export"><i data-lucide="download"></i>导出数据</button><button class="secondary-button" type="button" data-action="import"><i data-lucide="upload"></i>导入备份</button></div></section>
+      <section class="settings-section"><h2>排班同步</h2><p>只同步军、震的休息安排。两台设备使用同一个 Firebase 邮箱账号，连接后日历会实时更新。</p><p class="sync-status-line" data-schedule-sync-status aria-live="polite">${escapeHTML(scheduleSyncStatus)}</p><form class="sync-form" id="schedule-sync-form"><label class="field-grow"><span class="field-label">共享账号邮箱</span><input class="text-field" name="email" type="email" autocomplete="username" value="${escapeHTML(scheduleSync?.email() || '')}" required ${syncConfigured ? '' : 'disabled'} /></label><label class="field-grow"><span class="field-label">账号密码</span><input class="text-field" name="password" type="password" autocomplete="current-password" required ${syncConfigured ? '' : 'disabled'} /></label><button class="primary-button" type="submit" ${syncConfigured ? '' : 'disabled'}><i data-lucide="cloud"></i>连接同步</button></form><div class="settings-actions"><button class="secondary-button" type="button" data-action="disconnect-schedule-sync" ${scheduleSync?.email() ? '' : 'disabled'}><i data-lucide="cloud-off"></i>断开同步</button></div></section>
+      <section class="settings-section"><h2>数据备份</h2><p>备忘和待办只保存在当前设备。你可以导出 JSON 文件留存，或从备份文件恢复。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="export"><i data-lucide="download"></i>导出数据</button><button class="secondary-button" type="button" data-action="import"><i data-lucide="upload"></i>导入备份</button></div></section>
       <section class="settings-section"><h2>提醒通知</h2><p>可在待办中单独开启闹钟提醒。首次开启时，请允许通知权限。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="request-notification"><i data-lucide="bell-ring"></i>开启通知权限</button></div></section>
       <section class="settings-section"><h2>应用更新</h2><p>检查内部发布的 Android 版本。安装更新时，系统会显示安装确认。</p><div class="settings-version"><span>当前版本</span><strong>${escapeHTML(version)}</strong></div><div class="settings-actions"><button class="secondary-button" type="button" data-action="check-update"><i data-lucide="refresh-cw"></i>检查更新</button></div></section>
-      <section class="settings-section"><h2>本机数据</h2><p>清除当前设备保存的全部备忘、待办与休息安排。此操作无法撤销。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="clear-data"><i data-lucide="trash-2"></i>清除所有数据</button></div></section>
+      <section class="settings-section"><h2>本机数据</h2><p>清除当前设备的备忘和待办，并清除共享休息安排。此操作无法撤销。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="clear-data"><i data-lucide="trash-2"></i>清除所有数据</button></div></section>
     </div>`;
     updateNavigation();
     refreshIcons();
@@ -500,8 +573,18 @@
       state.tasks.forEach((task) => removeReminder(task.id));
       state.tasks = backup.tasks.filter((item) => item && item.id && item.title).map((item) => ({ ...item, id: String(item.id), title: String(item.title).slice(0, 100) }));
       state.notes = backup.notes.filter((item) => item && item.id && item.title).map((item) => ({ ...item, id: String(item.id), title: String(item.title).slice(0, 100) }));
+      const changedAt = Date.now();
+      const replacementRecords = {};
+      Object.values(state.scheduleRecords).forEach((record) => {
+        replacementRecords[scheduleKey(record.date, record.person)] = { ...record, off: false, updatedAt: changedAt, deviceId: scheduleSync?.deviceId() || '' };
+      });
+      daysOff.forEach((record) => {
+        replacementRecords[scheduleKey(record.date, record.person)] = { ...record, off: true, updatedAt: changedAt, deviceId: scheduleSync?.deviceId() || '' };
+      });
+      state.scheduleRecords = replacementRecords;
       state.daysOff = daysOff;
       persist();
+      scheduleSync?.replaceRecords(daysOff);
       state.tasks.forEach(updateReminder);
       render();
       showToast('备份已恢复');
@@ -536,15 +619,17 @@
         if (isValidDateKey(date) && SCHEDULE_PEOPLE.includes(person)) {
           const existingIndex = state.daysOff.findIndex((item) => item.date === date && item.person === person);
           if (existingIndex >= 0) {
-            state.daysOff.splice(existingIndex, 1);
+            setScheduleRecord(date, person, false);
             showToast(`已取消${person}的休息安排`);
           } else {
-            state.daysOff.push({ date, person });
+            setScheduleRecord(date, person, true);
             showToast(`已安排${person}休息`);
           }
-          persist();
           renderCalendar();
         }
+      } else if (action === 'disconnect-schedule-sync') {
+        scheduleSync?.disconnect();
+        showToast('已断开排班同步');
       } else if (action === 'edit-entry') {
         const collection = actionTarget.dataset.kind === 'task' ? state.tasks : state.notes;
         const entry = collection.find((item) => item.id === id);
@@ -570,8 +655,9 @@
         else document.getElementById('import-file').click();
       }
       else if (action === 'clear-data') {
-        if (window.confirm('清除本机全部备忘、待办和休息安排？此操作无法撤销。')) {
+        if (window.confirm('清除本机全部备忘、待办，并清除两台设备共享的休息安排？此操作无法撤销。')) {
           state.tasks.forEach((task) => removeReminder(task.id));
+          Object.values(state.scheduleRecords).filter((record) => record.off).forEach((record) => setScheduleRecord(record.date, record.person, false));
           state.tasks = [];
           state.notes = [];
           state.daysOff = [];
@@ -594,6 +680,22 @@
   }
 
   document.addEventListener('click', onAction);
+  document.addEventListener('submit', async (event) => {
+    if (event.target.id !== 'schedule-sync-form') return;
+    event.preventDefault();
+    const syncForm = event.target;
+    const submitButton = syncForm.querySelector('[type="submit"]');
+    submitButton.disabled = true;
+    try {
+      await scheduleSync.connect(syncForm.elements.email.value, syncForm.elements.password.value);
+      syncForm.elements.password.value = '';
+      showToast('排班同步已连接');
+    } catch (error) {
+      showToast(error.message || scheduleSync.status());
+    } finally {
+      submitButton.disabled = !scheduleSync?.configured;
+    }
+  });
   document.addEventListener('keydown', (event) => {
     const actionable = event.target.closest('[data-action="edit-entry"]');
     if (actionable && (event.key === 'Enter' || event.key === ' ')) {
@@ -637,10 +739,21 @@
   window.onUpdateStatus = (message) => showToast(message);
   window.importBackupJson = (content) => importDataText(content);
 
+  scheduleSync = window.createScheduleSync?.({
+    config: window.FIREBASE_SYNC_CONFIG,
+    onRecords: mergeScheduleRecords,
+    onStatus: (status) => {
+      scheduleSyncStatus = status;
+      document.querySelectorAll('[data-schedule-sync-status]').forEach((node) => { node.textContent = status; });
+      document.querySelectorAll('[data-action="disconnect-schedule-sync"]').forEach((button) => { button.disabled = !scheduleSync?.email(); });
+    }
+  }) || null;
+
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(() => {}));
   }
   state.tasks.forEach(updateReminder);
+  scheduleSync?.resume();
   render();
   if (window.AndroidBridge?.isUpdateConfigured?.()) window.setTimeout(() => window.AndroidBridge.checkForUpdates(), 1400);
 })();

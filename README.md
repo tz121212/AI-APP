@@ -12,6 +12,7 @@
 - 本地 JSON 数据导入与导出
 - Android 版本启动时检查更新，下载后交给系统安装器确认
 - 离线缓存的手机界面
+- Firebase 实时同步“军/震”休息排班；备忘与待办仍保存在本机
 
 ## 在本机预览
 
@@ -22,6 +23,29 @@ python -m http.server 4173
 ```
 
 打开 `http://localhost:4173`。浏览器预览的数据存储在当前浏览器中；系统级定时通知和 APK 更新只在 Android 应用里生效。
+
+## 配置排班实时同步
+
+1. 在 [Firebase Console](https://console.firebase.google.com/) 创建项目。
+2. 打开 **Build → Realtime Database → Create Database**，选择数据库区域并使用 **Locked mode**。
+3. 打开 **Build → Authentication → Get started → Sign-in method**，启用 **Email/Password**；在 **Users** 中创建一个内部共享账号，两台手机使用同一账号。
+4. 在 **Project settings → General → Your apps** 添加 Web app，复制 Web API Key；在 Realtime Database 页面复制数据库 URL。
+5. 把 API Key 和数据库 URL 填入 `firebase-config.js` 的 `apiKey` 和 `databaseURL`，将下面规则里的邮箱替换为共享账号邮箱，然后发布规则。
+
+```json
+{
+  "rules": {
+    "daily-assistant": {
+      "scheduleRecords": {
+        ".read": "auth != null && auth.token.email == 'SHARED_ACCOUNT_EMAIL'",
+        ".write": "auth != null && auth.token.email == 'SHARED_ACCOUNT_EMAIL'"
+      }
+    }
+  }
+}
+```
+
+Web API Key 不是数据库访问凭证；Realtime Database 规则只允许共享账号读写排班。不要启用公开读写规则，也不要把账号密码提交到代码库。App 登录后只在本机保存 Firebase 刷新令牌，密码不会保存。之后构建并安装新的签名 APK，在两台设备的“设置与备份 → 排班同步”中使用同一账号连接。
 
 ## 构建 Android APK
 

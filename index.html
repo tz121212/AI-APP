@@ -100,6 +100,15 @@
     <input type="file" id="import-file" accept="application/json,.json" hidden />
     <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
     <script src="assets/vendor/lucide.min.js"></script>
+    <script src="firebase-config.js"></script>
+    <script src="firebase-sync.js"></script>
     <script src="app.js"></script>
+    <script>
+      if (new URLSearchParams(location.search).get('migrate-storage') === '1') {
+        document.addEventListener('DOMContentLoaded', () => {
+          window.AndroidBridge?.completeLegacyStorageMigration(localStorage.getItem('daily-assistant-data-v1') || '');
+        }, { once: true });
+      }
+    </script>
   </body>
 </html>

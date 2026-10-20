@@ -1,9 +1,11 @@
-const CACHE_NAME = 'daily-assistant-v3';
+const CACHE_NAME = 'daily-assistant-v4';
 const APP_FILES = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './firebase-config.js',
+  './firebase-sync.js',
   './manifest.webmanifest',
   './assets/app-icon.svg',
   './assets/vendor/lucide.min.js'

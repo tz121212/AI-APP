@@ -16,9 +16,12 @@ import android.os.Environment
 import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.webkit.WebViewAssetLoader
 import java.text.SimpleDateFormat
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -29,9 +32,11 @@ import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
+    private lateinit var assetLoader: WebViewAssetLoader
     private val worker = Executors.newSingleThreadExecutor()
     private var pendingInstallId: Long? = null
     @Volatile private var pendingBackup: String? = null
+    private var legacyStorageInjectionInProgress = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,19 +46,53 @@ class MainActivity : Activity() {
             window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         }
         createReminderChannel(this)
+        assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
 
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = true
             settings.allowContentAccess = true
-            webViewClient = WebViewClient()
+            webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+                    assetLoader.shouldInterceptRequest(request.url)
+
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                    request.url.host != APP_ASSET_HOST
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    super.onPageFinished(view, url)
+                    if (url == APP_URL) injectLegacyStorageIfNeeded()
+                }
+            }
             webChromeClient = WebChromeClient()
             addJavascriptInterface(AppBridge(), "AndroidBridge")
         }
         setContentView(webView)
-        webView.loadUrl("file:///android_asset/web/index.html")
+        loadApp()
         handleInstallIntent(intent)
+    }
+
+    private fun loadApp() {
+        val migrated = getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .getBoolean(KEY_WEB_STORAGE_MIGRATED, false)
+        webView.loadUrl(if (migrated) APP_URL else LEGACY_MIGRATION_URL)
+    }
+
+    private fun injectLegacyStorageIfNeeded() {
+        if (legacyStorageInjectionInProgress) return
+        val preferences = getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        val data = preferences.getString(KEY_LEGACY_STORAGE_DATA, null) ?: return
+        legacyStorageInjectionInProgress = true
+        webView.evaluateJavascript(
+            "localStorage.setItem('daily-assistant-data-v1', ${JSONObject.quote(data)}); true;"
+        ) {
+            preferences.edit().remove(KEY_LEGACY_STORAGE_DATA).apply()
+            legacyStorageInjectionInProgress = false
+            webView.reload()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -260,6 +299,15 @@ class MainActivity : Activity() {
                 startActivityForResult(picker, REQUEST_IMPORT_BACKUP)
             }
         }
+
+        @JavascriptInterface
+        fun completeLegacyStorageMigration(data: String?) {
+            val preferences = getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
+                .putBoolean(KEY_WEB_STORAGE_MIGRATED, true)
+            if (!data.isNullOrBlank()) preferences.putString(KEY_LEGACY_STORAGE_DATA, data)
+            preferences.apply()
+            runOnUiThread { webView.loadUrl(APP_URL) }
+        }
     }
 
     companion object {
@@ -272,6 +320,12 @@ class MainActivity : Activity() {
         const val REQUEST_NOTIFICATIONS = 3401
         const val REQUEST_SAVE_BACKUP = 3402
         const val REQUEST_IMPORT_BACKUP = 3403
+        private const val PREFERENCES = "daily_assistant_web_storage"
+        private const val KEY_WEB_STORAGE_MIGRATED = "web_storage_migrated"
+        private const val KEY_LEGACY_STORAGE_DATA = "legacy_storage_data"
+        private const val APP_ASSET_HOST = "appassets.androidplatform.net"
+        private const val APP_URL = "https://appassets.androidplatform.net/assets/web/index.html"
+        private const val LEGACY_MIGRATION_URL = "file:///android_asset/web/index.html?migrate-storage=1"
 
         fun createReminderChannel(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
