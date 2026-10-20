@@ -1,4 +1,4 @@
-const CACHE_NAME = 'daily-assistant-v9';
+const CACHE_NAME = 'daily-assistant-v10';
 const APP_FILES = [
   './',
   './index.html',

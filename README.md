@@ -29,13 +29,13 @@ python -m http.server 4173
 ## 配置排班同步
 
 1. 在 `cloudbase-config.js` 填入 CloudBase PostgreSQL 环境 ID 和地域代码。
-2. 在 CloudBase 身份认证中启用用户名密码登录，并为内部共享账号设置用户名。两台手机使用同一个用户名和密码；不要把密码写进代码或提交到 GitHub。
+2. 在 CloudBase 身份认证中启用对应的邮箱密码或用户名密码登录方式，并创建 CloudBase 内部共享账号。两台手机使用同一邮箱/用户名及密码；不要把密码写进代码或提交到 GitHub。腾讯云控制台登录账号与 CloudBase 身份认证用户相互独立。
 3. 在 CloudBase CLI 已登录的环境中运行 `tcb db pg migration up -e <环境ID>`，应用 `cloudbase/migrations` 中的排班表和权限迁移。
 4. 安装新的 APK，在两台设备的“设置与备份 → 排班同步”中使用共享账号连接。
 
 本机 Android 构建从未提交的 `.env.local` 读取 `VITE_PUBLISHABLE_KEY`。GitHub Actions 构建需要在仓库 Settings → Secrets and variables → Actions 中添加同名 Secret。此 publishable key 会随 Android 客户端发布，只用于初始化 SDK；排班表另由账号会话和 RLS 隔离。
 
-客户端通过 CloudBase SDK 的用户名密码认证和 PostgreSQL `app.rdb()` 读写排班表，认证请求固定走环境所在地域的 Cloud API，以兼容 Android WebView 的跨域限制。当前 CloudBase PostgreSQL Realtime 尚未正式上线，因此 App 在前台约每 5 秒查询一次，回到前台时立即查询；后台挂起时不保证即时更新。登录密码不会保存，CloudBase SDK 会在本机维护登录会话。首次连接时，本机已有的休息排班会合并到云端。备忘和待办仍只保存在本机。
+客户端通过 CloudBase SDK 的邮箱或用户名密码认证和 PostgreSQL `app.rdb()` 读写排班表，认证请求固定走环境所在地域的 Cloud API，以兼容 Android WebView 的跨域限制。当前 CloudBase PostgreSQL Realtime 尚未正式上线，因此 App 在前台约每 5 秒查询一次，回到前台时立即查询；后台挂起时不保证即时更新。登录密码不会保存，CloudBase SDK 会在本机维护登录会话。首次连接时，本机已有的休息排班会合并到云端。备忘和待办仍只保存在本机。
 
 CloudBase SDK 更新或修改 `cloudbase-entry.js` 后，运行 `npm ci` 和 `npm run build:cloudbase` 重新生成本地 SDK 资源，再构建 Android APK。GitHub Actions 会验证同步逻辑并重新打包 SDK。
 
