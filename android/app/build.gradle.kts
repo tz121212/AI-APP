@@ -17,6 +17,11 @@ android {
     namespace = "com.dailyassistant.mobile"
     compileSdk = 35
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
     defaultConfig {
         applicationId = "com.dailyassistant.mobile"
         minSdk = 26
@@ -28,6 +33,10 @@ android {
 
     buildFeatures {
         buildConfig = true
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
     }
 
     signingConfigs {
