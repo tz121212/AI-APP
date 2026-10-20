@@ -7,6 +7,7 @@ const APP_FILES = [
   './cloudbase-config.js',
   './assets/vendor/cloudbase.bundle.js',
   './cloudbase-sync.js',
+  './history-retention.js',
   './manifest.webmanifest',
   './assets/app-icon.svg',
   './assets/vendor/lucide.min.js'

@@ -14,7 +14,6 @@
   let scheduleSync = null;
   let scheduleSyncStatus = window.CLOUDBASE_SYNC_CONFIG?.env ? '尚未连接云端' : '云端服务尚未配置';
   const browserReminderTimers = new Map();
-  const HISTORY_RETENTION_MONTHS = 1;
 
   const root = document.getElementById('view-root');
   const dialog = document.getElementById('editor-dialog');
@@ -116,40 +115,12 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }
 
-  function historyCutoffTimestamp(now = new Date()) {
-    const cutoff = new Date(now);
-    cutoff.setMonth(cutoff.getMonth() - HISTORY_RETENTION_MONTHS);
-    return cutoff.getTime();
-  }
-
-  function parseTimestamp(value) {
-    const timestamp = Date.parse(value || '');
-    return Number.isFinite(timestamp) ? timestamp : 0;
-  }
-
-  function taskHistoryTimestamp(task) {
-    if (task.completed) return parseTimestamp(task.completedAt || task.updatedAt || task.createdAt);
-    if (task.dueDate) {
-      const dueTimestamp = Date.parse(`${task.dueDate}T${task.dueTime || '23:59'}:00`);
-      if (Number.isFinite(dueTimestamp) && dueTimestamp < Date.now()) return dueTimestamp;
-    }
-    return parseTimestamp(task.updatedAt || task.createdAt);
-  }
-
   function cleanupExpiredHistory() {
-    const cutoff = historyCutoffTimestamp();
-    const expiredTaskIds = state.tasks
-      .filter((task) => task && task.id && taskHistoryTimestamp(task) > 0 && taskHistoryTimestamp(task) < cutoff)
-      .map((task) => String(task.id));
-    expiredTaskIds.forEach((taskId) => removeReminder(taskId));
-    const beforeTasks = state.tasks.length;
-    const beforeNotes = state.notes.length;
-    state.tasks = state.tasks.filter((task) => !expiredTaskIds.includes(String(task?.id)));
-    state.notes = state.notes.filter((note) => {
-      const timestamp = parseTimestamp(note?.updatedAt || note?.createdAt);
-      return !timestamp || timestamp >= cutoff;
-    });
-    const removed = beforeTasks - state.tasks.length + beforeNotes - state.notes.length;
+    const result = window.DailyHistoryRetention.cleanup(state.tasks, state.notes, new Date());
+    result.expiredTaskIds.forEach(removeReminder);
+    state.tasks = result.tasks;
+    state.notes = result.notes;
+    const removed = result.removedTasks + result.removedNotes;
     if (removed) persist();
     return removed;
   }
@@ -383,7 +354,7 @@
     const version = window.AndroidBridge?.getAppVersion?.() || '网页预览版';
     const syncConfigured = Boolean(scheduleSync?.configured);
     root.innerHTML = `<div class="settings-view">
-      <section class="settings-section"><h2>排班同步</h2><p>只同步军、震的休息安排。两台设备使用同一个 CloudBase 账号，应用打开时约每 5 秒检查一次更新；返回应用时会立即同步。</p><p class="sync-status-line" data-schedule-sync-status aria-live="polite">${escapeHTML(scheduleSyncStatus)}</p><form class="sync-form" id="schedule-sync-form"><label class="field-grow"><span class="field-label">共享账号</span><input class="text-field" name="email" type="text" autocomplete="username" value="${escapeHTML(scheduleSync?.email() || '')}" required ${syncConfigured ? '' : 'disabled'} /></label><label class="field-grow"><span class="field-label">账号密码</span><input class="text-field" name="password" type="password" autocomplete="current-password" required ${syncConfigured ? '' : 'disabled'} /></label><button class="primary-button" type="submit" ${syncConfigured ? '' : 'disabled'}><i data-lucide="cloud"></i>连接同步</button></form><div class="settings-actions"><button class="secondary-button" type="button" data-action="disconnect-schedule-sync" ${scheduleSync?.email() ? '' : 'disabled'}><i data-lucide="cloud-off"></i>断开同步</button></div></section>
+      <section class="settings-section"><h2>排班同步</h2><p>只同步军、震的休息安排。两台设备使用同一个 CloudBase 账号，应用打开时约每 5 秒检查一次更新；返回应用时会立即同步。</p><p class="sync-status-line" data-schedule-sync-status aria-live="polite">${escapeHTML(scheduleSyncStatus)}</p><form class="sync-form" id="schedule-sync-form"><label class="field-grow"><span class="field-label">共享邮箱</span><input class="text-field" name="email" type="email" autocomplete="username" placeholder="CloudBase 已绑定邮箱" value="${escapeHTML(scheduleSync?.email() || '')}" required ${syncConfigured ? '' : 'disabled'} /></label><label class="field-grow"><span class="field-label">账号密码</span><input class="text-field" name="password" type="password" autocomplete="current-password" required ${syncConfigured ? '' : 'disabled'} /></label><button class="primary-button" type="submit" ${syncConfigured ? '' : 'disabled'}><i data-lucide="cloud"></i>连接同步</button></form><div class="settings-actions"><button class="secondary-button" type="button" data-action="disconnect-schedule-sync" ${scheduleSync?.email() ? '' : 'disabled'}><i data-lucide="cloud-off"></i>断开同步</button></div></section>
       <section class="settings-section"><h2>数据备份</h2><p>备忘和待办只保存在当前设备。你可以导出 JSON 文件留存，或从备份文件恢复。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="export"><i data-lucide="download"></i>导出数据</button><button class="secondary-button" type="button" data-action="import"><i data-lucide="upload"></i>导入备份</button></div></section>
       <section class="settings-section"><h2>提醒通知</h2><p>可在待办中单独开启闹钟提醒。到点会响铃，通知会一直保留到待办完成或取消。首次开启时，请允许通知权限。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="request-notification"><i data-lucide="bell-ring"></i>开启通知权限</button></div></section>
       <section class="settings-section"><h2>应用更新</h2><p>检查内部发布的 Android 版本。安装更新时，系统会显示安装确认。</p><div class="settings-version"><span>当前版本</span><strong>${escapeHTML(version)}</strong></div><div class="settings-actions"><button class="secondary-button" type="button" data-action="check-update"><i data-lucide="refresh-cw"></i>检查更新</button></div></section>

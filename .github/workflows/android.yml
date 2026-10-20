@@ -27,7 +27,7 @@ jobs:
           node --check cloudbase-config.js
           node --check cloudbase-sync.js
       - name: Test CloudBase schedule sync
-        run: node --test tests/cloudbase-sync.test.cjs
+        run: node --test tests/*.test.cjs
 
   debug-build:
     needs: verify-schedule-sync

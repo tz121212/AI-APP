@@ -5,6 +5,7 @@
   const TABLE = 'schedule_records';
   const POLL_INTERVAL_MS = 5000;
   const POLL_OVERLAP_MS = 5000;
+  const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   function createScheduleSync({ config, onRecords, onStatus }) {
     const env = String(config?.env || '').trim();
@@ -145,14 +146,15 @@
     }
 
     async function signIn(value, password) {
+      const email = String(value || '').trim().toLowerCase();
+      if (!EMAIL_PATTERN.test(email)) throw new Error('请输入 CloudBase 账号绑定的完整邮箱地址');
       ensureClient();
-      const credential = value.includes('@') ? { email: value, password } : { username: value, password };
-      const result = await auth.signInWithPassword(credential);
+      const result = await auth.signInWithPassword({ email, password });
       if (result?.error) throw result.error;
       const session = result?.data?.session;
       if (!session || session.user?.is_anonymous) throw new Error('登录未建立有效账号会话，请检查账号和登录配置');
       const user = session.user || result?.data?.user;
-      account = user?.username || user?.email || value;
+      account = user?.email || email;
       localStorage.setItem(AUTH_KEY, JSON.stringify({ account }));
       connected = true;
       startPolling();
@@ -238,7 +240,7 @@
           return;
         }
         const user = session.user;
-        account = user.username || user.email || account;
+        account = user.email || account;
         if (account) localStorage.setItem(AUTH_KEY, JSON.stringify({ account }));
         connected = true;
         startPolling();
@@ -263,8 +265,12 @@
       } catch (error) {
         connected = false;
         stopPolling();
-        setStatus(error?.message || '无法连接云端');
-        throw error;
+        const message = String(error?.message || '无法连接云端');
+        const displayMessage = /failed to fetch|networkerror|load failed/i.test(message)
+          ? '无法连接 CloudBase 邮箱认证服务（Failed to fetch）。请检查手机网络是否能访问腾讯云开发，以及当前版本中的环境 ID 和访问密钥。账号密码错误会显示具体认证错误。'
+          : message;
+        setStatus(displayMessage);
+        throw new Error(displayMessage);
       }
     }
 

@@ -32,7 +32,8 @@ object ReminderScheduler {
         val pending = PendingIntent.getBroadcast(context, id.hashCode() and 0x7fffffff, Intent(context, ReminderReceiver::class.java), flags())
         manager.cancel(pending)
         pending.cancel()
-        (context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(id.hashCode())
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(notificationId(id))
+        context.stopService(Intent(context, AlarmRingingService::class.java).putExtra(MainActivity.EXTRA_TASK_ID, id))
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().remove(id).apply()
     }
 
@@ -88,6 +89,8 @@ object ReminderScheduler {
     }
 
     private fun flags(): Int = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+
+    fun notificationId(id: String): Int = (id.hashCode() and 0x7fffffff).coerceAtLeast(1)
 
     private const val PREFERENCES = "daily_reminders"
 }

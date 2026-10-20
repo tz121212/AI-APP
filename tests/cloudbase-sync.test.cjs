@@ -15,6 +15,7 @@ let credentials;
 let cloudbaseConfig;
 let currentUser = null;
 let failedWrites = 0;
+let failedLogin = null;
 const createMockApp = (config) => {
   cloudbaseConfig = config;
   return {
@@ -23,6 +24,7 @@ const createMockApp = (config) => {
       return {
         signInWithPassword: async (value) => {
           credentials = value;
+          if (failedLogin) throw failedLogin;
           currentUser = { username: 'sync-user', email: 'sync@example.com' };
           return { data: { user: currentUser, session: { user: currentUser } }, error: null };
         },
@@ -77,6 +79,7 @@ beforeEach(() => {
   cloudbaseConfig = null;
   currentUser = null;
   failedWrites = 0;
+  failedLogin = null;
   global.createCloudBaseApp = createMockApp;
 });
 
@@ -98,7 +101,7 @@ test('logs in, reads PostgreSQL schedule rows, and upserts a changed record', as
   await sync.connect('sync@example.com', 'not-a-real-password');
   assert.deepEqual(cloudbaseConfig, { env: 'test-env-123', region: 'ap-shanghai', accessKey: 'test-publishable-key' });
   assert.deepEqual(credentials, { email: 'sync@example.com', password: 'not-a-real-password' });
-  assert.deepEqual(JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), { account: 'sync-user' });
+  assert.deepEqual(JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), { account: 'sync@example.com' });
   assert.equal('password' in JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), false);
   assert.equal(snapshots.at(-1).records['2026-10-20_军'].off, true);
   assert.equal(snapshots.at(-1).initial, true);
@@ -110,6 +113,18 @@ test('logs in, reads PostgreSQL schedule rows, and upserts a changed record', as
     record: { date: '2026-10-21', person: '震', off: true, client_updated_at: 456, device_id: 'device-a' }
   });
   assert.deepEqual(JSON.parse(storage.get('daily-assistant-sync-pending-v1')), {});
+});
+
+test('uses the bound email login and explains fetch failures as connectivity problems', async (t) => {
+  let sync;
+  t.after(() => sync?.disconnect());
+  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
+  await assert.rejects(sync.connect('sync-user', 'not-a-real-password'), /完整邮箱地址/);
+  assert.equal(cloudbaseConfig, null);
+
+  failedLogin = new Error('Failed to fetch');
+  await assert.rejects(sync.connect('SYNC@example.com', 'not-a-real-password'), /检查手机网络/);
+  assert.deepEqual(credentials, { email: 'sync@example.com', password: 'not-a-real-password' });
 });
 
 test('resumes a saved session and queues local rows until the first PostgreSQL read', async (t) => {

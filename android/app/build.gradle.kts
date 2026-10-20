@@ -81,7 +81,7 @@ dependencies {
 
 val copyWebAssets by tasks.registering(Copy::class) {
     from(webSource) {
-        include("index.html", "styles.css", "app.js", "cloudbase-sync.js", "manifest.webmanifest", "service-worker.js", "assets/**")
+        include("index.html", "styles.css", "app.js", "cloudbase-sync.js", "history-retention.js", "manifest.webmanifest", "service-worker.js", "assets/**")
     }
     into(generatedWebAssets.map { it.dir("web") })
     doLast {

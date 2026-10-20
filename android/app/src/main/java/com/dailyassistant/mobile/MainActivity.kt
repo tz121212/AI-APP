@@ -2,6 +2,7 @@ package com.dailyassistant.mobile
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlarmManager
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.app.NotificationManager
@@ -37,6 +38,7 @@ class MainActivity : Activity() {
     private var pendingInstallId: Long? = null
     @Volatile private var pendingBackup: String? = null
     private var legacyStorageInjectionInProgress = false
+    private var exactAlarmsPreviouslyAllowed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,6 +75,34 @@ class MainActivity : Activity() {
         setContentView(webView)
         loadApp()
         handleInstallIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = getSystemService(AlarmManager::class.java)
+            val allowed = alarmManager.canScheduleExactAlarms()
+            if (allowed && !exactAlarmsPreviouslyAllowed) ReminderScheduler.rescheduleAll(this)
+            exactAlarmsPreviouslyAllowed = allowed
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_NOTIFICATIONS) return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) requestExactAlarmAccess()
+        else toastToWeb("未开启通知权限，待办闹钟无法显示")
+    }
+
+    private fun requestExactAlarmAccess() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val alarmManager = getSystemService(AlarmManager::class.java)
+        if (alarmManager.canScheduleExactAlarms()) return
+        try {
+            startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).setData(Uri.parse("package:$packageName")))
+        } catch (_: Exception) {
+            toastToWeb("请在系统设置中允许精确闹钟，当前将使用普通定时提醒")
+        }
     }
 
     private fun loadApp() {
@@ -265,7 +295,10 @@ class MainActivity : Activity() {
             runOnUiThread {
                 if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
-                } else toastToWeb("通知权限已开启")
+                } else {
+                    requestExactAlarmAccess()
+                    toastToWeb("通知权限已开启")
+                }
             }
         }
 
@@ -331,14 +364,9 @@ class MainActivity : Activity() {
         fun createReminderChannel(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val manager = context.getSystemService(NotificationManager::class.java)
-                val alarmSound = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
-                val audioAttributes = android.media.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_ALARM)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build()
                 val channel = android.app.NotificationChannel(CHANNEL_ID, "待办闹钟", android.app.NotificationManager.IMPORTANCE_HIGH).apply {
                     description = "日常待办到期闹钟提醒"
-                    setSound(alarmSound, audioAttributes)
+                    setSound(null, null)
                     enableVibration(true)
                     vibrationPattern = longArrayOf(0, 500, 300, 500, 300, 1000)
                 }
