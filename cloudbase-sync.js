@@ -55,7 +55,7 @@
 
     function ensureClient() {
       if (app) return;
-      app = globalThis.createCloudBaseApp({ env, region, accessKey });
+      app = globalThis.createCloudBaseApp({ env, region, accessKey, endPointMode: 'CLOUD_API' });
       auth = app.auth({ persistence: 'local' });
       db = app.rdb();
       if (!db) throw new Error('CloudBase PostgreSQL 客户端不可用');

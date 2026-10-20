@@ -35,7 +35,7 @@ python -m http.server 4173
 
 本机 Android 构建从未提交的 `.env.local` 读取 `VITE_PUBLISHABLE_KEY`。GitHub Actions 构建需要在仓库 Settings → Secrets and variables → Actions 中添加同名 Secret。此 publishable key 会随 Android 客户端发布，只用于初始化 SDK；排班表另由账号会话和 RLS 隔离。
 
-客户端通过 CloudBase SDK 的账号密码认证和 PostgreSQL `app.rdb()` 读写排班表。当前 CloudBase PostgreSQL Realtime 尚未正式上线，因此 App 在前台约每 5 秒查询一次，回到前台时立即查询；后台挂起时不保证即时更新。登录密码不会保存，CloudBase SDK 会在本机维护登录会话。首次连接时，本机已有的休息排班会合并到云端。备忘和待办仍只保存在本机。
+客户端通过 CloudBase SDK 的账号密码认证和 PostgreSQL `app.rdb()` 读写排班表，认证请求固定走环境所在地域的 Cloud API，以兼容 Android WebView 的跨域限制。当前 CloudBase PostgreSQL Realtime 尚未正式上线，因此 App 在前台约每 5 秒查询一次，回到前台时立即查询；后台挂起时不保证即时更新。登录密码不会保存，CloudBase SDK 会在本机维护登录会话。首次连接时，本机已有的休息排班会合并到云端。备忘和待办仍只保存在本机。
 
 CloudBase SDK 更新或修改 `cloudbase-entry.js` 后，运行 `npm ci` 和 `npm run build:cloudbase` 重新生成本地 SDK 资源，再构建 Android APK。GitHub Actions 会验证同步逻辑并重新打包 SDK。
 

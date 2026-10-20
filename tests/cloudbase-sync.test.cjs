@@ -99,7 +99,9 @@ test('logs in, reads PostgreSQL schedule rows, and upserts a changed record', as
   });
 
   await sync.connect('sync@example.com', 'not-a-real-password');
-  assert.deepEqual(cloudbaseConfig, { env: 'test-env-123', region: 'ap-shanghai', accessKey: 'test-publishable-key' });
+  assert.deepEqual(cloudbaseConfig, {
+    env: 'test-env-123', region: 'ap-shanghai', accessKey: 'test-publishable-key', endPointMode: 'CLOUD_API'
+  });
   assert.deepEqual(credentials, { email: 'sync@example.com', password: 'not-a-real-password' });
   assert.deepEqual(JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), { account: 'sync@example.com' });
   assert.equal('password' in JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), false);
