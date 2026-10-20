@@ -109,11 +109,16 @@
     return [...items].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   }
 
+  function taskReminderEnabled(task) {
+    return task.reminderEnabled === undefined ? Boolean(task.dueDate && task.dueTime) : task.reminderEnabled === true;
+  }
+
   function taskRow(task, compact = false) {
     const dateLabel = task.dueDate ? relativeDate(task.dueDate) : '';
     const timeLabel = task.dueTime ? `<span class="task-time ${task.dueDate < today ? 'late' : ''}"><i data-lucide="clock-3"></i>${escapeHTML(task.dueTime)}</span>` : '';
     const repeatLabel = task.repeat && task.repeat !== 'none' ? `<span class="repeat-label"><i data-lucide="repeat-2"></i>${repeatText(task.repeat)}</span>` : '';
-    const meta = (dateLabel || timeLabel || repeatLabel) ? `<div class="task-meta">${dateLabel ? `<span>${escapeHTML(dateLabel)}</span>` : ''}${timeLabel}${repeatLabel}</div>` : '';
+    const reminderLabel = taskReminderEnabled(task) ? '<span class="reminder-label"><i data-lucide="bell-ring"></i>闹钟</span>' : '';
+    const meta = (dateLabel || timeLabel || repeatLabel || reminderLabel) ? `<div class="task-meta">${dateLabel ? `<span>${escapeHTML(dateLabel)}</span>` : ''}${timeLabel}${repeatLabel}${reminderLabel}</div>` : '';
     return `<article class="task-row ${task.completed ? 'is-complete' : ''}" data-task-row="${escapeHTML(task.id)}">
       <input class="task-check" type="checkbox" aria-label="${task.completed ? '标记未完成' : '标记完成'}：${escapeHTML(task.title)}" data-action="toggle-task" data-id="${escapeHTML(task.id)}" ${task.completed ? 'checked' : ''} />
       <div class="task-copy" data-action="edit-entry" data-kind="task" data-id="${escapeHTML(task.id)}" role="button" tabindex="0">
@@ -268,7 +273,7 @@
     const version = window.AndroidBridge?.getAppVersion?.() || '网页预览版';
     root.innerHTML = `<div class="settings-view">
       <section class="settings-section"><h2>数据备份</h2><p>备忘、待办和休息安排只保存在当前设备。你可以导出 JSON 文件留存，或从备份文件恢复。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="export"><i data-lucide="download"></i>导出数据</button><button class="secondary-button" type="button" data-action="import"><i data-lucide="upload"></i>导入备份</button></div></section>
-      <section class="settings-section"><h2>提醒通知</h2><p>Android 版本会通过系统通知提醒到期事项。首次使用时，请允许通知权限。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="request-notification"><i data-lucide="bell-ring"></i>开启通知权限</button></div></section>
+      <section class="settings-section"><h2>提醒通知</h2><p>可在待办中单独开启闹钟提醒。首次开启时，请允许通知权限。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="request-notification"><i data-lucide="bell-ring"></i>开启通知权限</button></div></section>
       <section class="settings-section"><h2>应用更新</h2><p>检查内部发布的 Android 版本。安装更新时，系统会显示安装确认。</p><div class="settings-version"><span>当前版本</span><strong>${escapeHTML(version)}</strong></div><div class="settings-actions"><button class="secondary-button" type="button" data-action="check-update"><i data-lucide="refresh-cw"></i>检查更新</button></div></section>
       <section class="settings-section"><h2>本机数据</h2><p>清除当前设备保存的全部备忘、待办与休息安排。此操作无法撤销。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="clear-data"><i data-lucide="trash-2"></i>清除所有数据</button></div></section>
     </div>`;
@@ -309,9 +314,11 @@
     form.elements.body.value = entry?.body || '';
     form.elements.dueDate.value = entry?.dueDate || defaultDate || today;
     form.elements.dueTime.value = entry?.dueTime || '';
+    form.elements.reminderEnabled.checked = entry ? taskReminderEnabled(entry) : false;
     form.elements.repeat.value = entry?.repeat || 'none';
     form.elements.tag.value = entry?.tag || '工作';
     form.elements.pinned.checked = Boolean(entry?.pinned);
+    syncReminderControl();
     document.getElementById('delete-entry').classList.toggle('hidden', !entry);
     document.getElementById('save-label').textContent = entry ? '保存修改' : '保存';
     setEditorKind(kind);
@@ -325,9 +332,17 @@
     window.AndroidBridge?.cancelReminder?.(String(taskId));
   }
 
+  function syncReminderControl() {
+    const reminderCheckbox = form.elements.reminderEnabled;
+    const canEnable = Boolean(form.elements.dueDate.value && form.elements.dueTime.value);
+    reminderCheckbox.disabled = !canEnable;
+    if (!canEnable) reminderCheckbox.checked = false;
+    document.getElementById('reminder-help').textContent = canEnable ? '到期时通过系统通知提醒' : '选择日期和时间后可开启';
+  }
+
   function updateReminder(task) {
     removeReminder(task.id);
-    if (task.completed || !task.dueDate || !task.dueTime) return;
+    if (task.completed || !taskReminderEnabled(task) || !task.dueDate || !task.dueTime) return;
     let trigger = new Date(`${task.dueDate}T${task.dueTime}:00`);
     if (!Number.isFinite(trigger.getTime())) return;
     while (trigger.getTime() <= Date.now() && task.repeat && task.repeat !== 'none') {
@@ -401,18 +416,25 @@
     if (!title) return;
 
     if (kind === 'task') {
+      const reminderEnabled = form.elements.reminderEnabled.checked;
+      if (reminderEnabled && (!form.elements.dueDate.value || !form.elements.dueTime.value)) {
+        showToast('请先设置待办日期和时间');
+        return;
+      }
       const existing = state.tasks.find((task) => task.id === id);
       const task = {
         ...(existing || {}), id: id || newId(), title, body,
         dueDate: form.elements.dueDate.value || null,
         dueTime: form.elements.dueDate.value ? form.elements.dueTime.value || '' : '',
         repeat: form.elements.dueDate.value ? form.elements.repeat.value : 'none',
+        reminderEnabled,
         completed: existing?.completed || false,
         createdAt: existing?.createdAt || now, updatedAt: now
       };
       if (existing) Object.assign(existing, task);
       else state.tasks.push(task);
       updateReminder(task);
+      if (reminderEnabled) window.AndroidBridge?.requestNotificationPermission?.();
     } else {
       const existing = state.notes.find((note) => note.id === id);
       const note = {
@@ -592,6 +614,10 @@
   document.getElementById('cancel-editor').addEventListener('click', () => dialog.close());
   document.getElementById('delete-entry').addEventListener('click', deleteCurrentEntry);
   form.addEventListener('submit', saveEntry);
+  form.elements.dueDate.addEventListener('input', syncReminderControl);
+  form.elements.dueDate.addEventListener('change', syncReminderControl);
+  form.elements.dueTime.addEventListener('input', syncReminderControl);
+  form.elements.dueTime.addEventListener('change', syncReminderControl);
   document.getElementById('import-file').addEventListener('change', (event) => importData(event.target.files?.[0]));
   searchBox.addEventListener('click', (event) => {
     if (window.matchMedia('(max-width: 760px)').matches && !searchBox.classList.contains('search-open')) {

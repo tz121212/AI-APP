@@ -91,6 +91,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .task-meta svg { width: 12px; height: 12px; }
 .task-time { display: inline-flex; align-items: center; gap: 4px; }
 .task-time.late { color: var(--red); }
+.reminder-label { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 4px; background: var(--orange-soft); color: #9a5c1b; }
 .repeat-label { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 4px; background: var(--blue-soft); color: var(--blue); }
 .task-more { align-self: center; width: 30px; height: 30px; border: 0; border-radius: 5px; background: transparent; color: #859189; cursor: pointer; opacity: 0; }
 .task-row:hover .task-more, .task-more:focus-visible { opacity: 1; }
@@ -213,7 +214,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .pin-option input { position: absolute; opacity: 0; }
 .checkmark { width: 17px; height: 17px; display: grid; place-items: center; border: 1px solid #bac5bd; border-radius: 4px; color: #fff; }
 .pin-option input:checked + .checkmark { border-color: var(--green); background: var(--green); }
+.pin-option input:disabled + .checkmark { border-color: #dce3de; background: #f4f6f4; }
 .pin-option input:checked + .checkmark::after { width: 7px; height: 4px; border-bottom: 2px solid #fff; border-left: 2px solid #fff; content: ''; transform: rotate(-45deg) translateY(-1px); }
+.reminder-field { padding-top: 11px; margin-top: 12px; border-top: 1px solid #edf0ee; }
+.reminder-option { margin-top: 0; }
+.reminder-option:has(input:disabled) { cursor: not-allowed; opacity: .6; }
+.field-hint { margin: 6px 0 0 25px; color: var(--muted); font-size: 10px; line-height: 1.4; }
 .dialog-actions { display: flex; align-items: center; gap: 8px; margin-top: 22px; padding-top: 14px; border-top: 1px solid #edf0ee; }
 .dialog-actions .primary-button { min-height: 37px; font-size: 12px; }
 .dialog-actions .secondary-button { min-height: 37px; }
