@@ -1,10 +1,11 @@
-const CACHE_NAME = 'daily-assistant-v7';
+const CACHE_NAME = 'daily-assistant-v8';
 const APP_FILES = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './cloudbase-config.js',
+  './cloudbase-fetch-shim.js',
   './assets/vendor/cloudbase.bundle.js',
   './cloudbase-sync.js',
   './history-retention.js',

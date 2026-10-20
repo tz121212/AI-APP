@@ -266,9 +266,11 @@
         connected = false;
         stopPolling();
         const message = String(error?.message || '无法连接云端');
-        const displayMessage = /failed to fetch|networkerror|load failed/i.test(message)
-          ? '无法连接 CloudBase 邮箱认证服务（Failed to fetch）。请检查手机网络是否能访问腾讯云开发，以及当前版本中的环境 ID 和访问密钥。账号密码错误会显示具体认证错误。'
-          : message;
+        const displayMessage = /cloudbase fetch and xhr failed/i.test(message)
+          ? 'Android WebView 的 fetch 和 XHR 都无法连接 CloudBase。请切换手机 Wi-Fi/移动网络后重试；如仍失败，请检查手机网络是否能访问腾讯云开发。'
+          : /failed to fetch|networkerror|load failed/i.test(message)
+            ? '无法连接 CloudBase 邮箱认证服务（Failed to fetch）。请检查手机网络是否能访问腾讯云开发。账号密码错误会显示具体认证错误。'
+            : message;
         setStatus(displayMessage);
         throw new Error(displayMessage);
       }
