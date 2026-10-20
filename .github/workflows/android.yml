@@ -18,13 +18,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run build:cloudbase
       - name: Check JavaScript syntax
         run: |
           node --check app.js
-          node --check firebase-config.js
-          node --check firebase-sync.js
-      - name: Test Firebase schedule sync
-        run: node --test tests/firebase-sync.test.cjs
+          node --check cloudbase-config.js
+          node --check cloudbase-sync.js
+      - name: Test CloudBase schedule sync
+        run: node --test tests/cloudbase-sync.test.cjs
 
   debug-build:
     needs: verify-schedule-sync
@@ -36,6 +39,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run build:cloudbase
       - name: Install Android SDK packages
         shell: bash
         run: |
@@ -76,6 +85,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run build:cloudbase
       - name: Install Android SDK packages
         shell: bash
         run: |

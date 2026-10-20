@@ -100,8 +100,9 @@
     <input type="file" id="import-file" accept="application/json,.json" hidden />
     <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
     <script src="assets/vendor/lucide.min.js"></script>
-    <script src="firebase-config.js"></script>
-    <script src="firebase-sync.js"></script>
+    <script src="cloudbase-config.js"></script>
+    <script src="assets/vendor/cloudbase.bundle.js"></script>
+    <script src="cloudbase-sync.js"></script>
     <script src="app.js"></script>
     <script>
       if (new URLSearchParams(location.search).get('migrate-storage') === '1') {

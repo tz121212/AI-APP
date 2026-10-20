@@ -1,0 +1,11 @@
+{
+  "name": "daily-assistant-android",
+  "private": true,
+  "scripts": {
+    "build:cloudbase": "esbuild cloudbase-entry.js --bundle --minify --format=iife --global-name=CloudbaseBundle --platform=browser --target=es2019 --legal-comments=inline --outfile=assets/vendor/cloudbase.bundle.js"
+  },
+  "devDependencies": {
+    "@cloudbase/js-sdk": "3.10.3",
+    "esbuild": "0.27.2"
+  }
+}

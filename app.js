@@ -12,7 +12,7 @@
   let schedulePerson = SCHEDULE_PEOPLE[0];
   let showCompleted = false;
   let scheduleSync = null;
-  let scheduleSyncStatus = window.FIREBASE_SYNC_CONFIG?.apiKey && window.FIREBASE_SYNC_CONFIG?.databaseURL ? '尚未连接云端' : '云端服务尚未配置';
+  let scheduleSyncStatus = window.CLOUDBASE_SYNC_CONFIG?.env ? '尚未连接云端' : '云端服务尚未配置';
   const browserReminderTimers = new Map();
 
   const root = document.getElementById('view-root');
@@ -344,7 +344,7 @@
     const version = window.AndroidBridge?.getAppVersion?.() || '网页预览版';
     const syncConfigured = Boolean(scheduleSync?.configured);
     root.innerHTML = `<div class="settings-view">
-      <section class="settings-section"><h2>排班同步</h2><p>只同步军、震的休息安排。两台设备使用同一个 Firebase 邮箱账号，连接后日历会实时更新。</p><p class="sync-status-line" data-schedule-sync-status aria-live="polite">${escapeHTML(scheduleSyncStatus)}</p><form class="sync-form" id="schedule-sync-form"><label class="field-grow"><span class="field-label">共享账号邮箱</span><input class="text-field" name="email" type="email" autocomplete="username" value="${escapeHTML(scheduleSync?.email() || '')}" required ${syncConfigured ? '' : 'disabled'} /></label><label class="field-grow"><span class="field-label">账号密码</span><input class="text-field" name="password" type="password" autocomplete="current-password" required ${syncConfigured ? '' : 'disabled'} /></label><button class="primary-button" type="submit" ${syncConfigured ? '' : 'disabled'}><i data-lucide="cloud"></i>连接同步</button></form><div class="settings-actions"><button class="secondary-button" type="button" data-action="disconnect-schedule-sync" ${scheduleSync?.email() ? '' : 'disabled'}><i data-lucide="cloud-off"></i>断开同步</button></div></section>
+      <section class="settings-section"><h2>排班同步</h2><p>只同步军、震的休息安排。两台设备使用同一个 CloudBase 账号，连接后日历会实时更新。</p><p class="sync-status-line" data-schedule-sync-status aria-live="polite">${escapeHTML(scheduleSyncStatus)}</p><form class="sync-form" id="schedule-sync-form"><label class="field-grow"><span class="field-label">共享账号</span><input class="text-field" name="email" type="text" autocomplete="username" value="${escapeHTML(scheduleSync?.email() || '')}" required ${syncConfigured ? '' : 'disabled'} /></label><label class="field-grow"><span class="field-label">账号密码</span><input class="text-field" name="password" type="password" autocomplete="current-password" required ${syncConfigured ? '' : 'disabled'} /></label><button class="primary-button" type="submit" ${syncConfigured ? '' : 'disabled'}><i data-lucide="cloud"></i>连接同步</button></form><div class="settings-actions"><button class="secondary-button" type="button" data-action="disconnect-schedule-sync" ${scheduleSync?.email() ? '' : 'disabled'}><i data-lucide="cloud-off"></i>断开同步</button></div></section>
       <section class="settings-section"><h2>数据备份</h2><p>备忘和待办只保存在当前设备。你可以导出 JSON 文件留存，或从备份文件恢复。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="export"><i data-lucide="download"></i>导出数据</button><button class="secondary-button" type="button" data-action="import"><i data-lucide="upload"></i>导入备份</button></div></section>
       <section class="settings-section"><h2>提醒通知</h2><p>可在待办中单独开启闹钟提醒。首次开启时，请允许通知权限。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="request-notification"><i data-lucide="bell-ring"></i>开启通知权限</button></div></section>
       <section class="settings-section"><h2>应用更新</h2><p>检查内部发布的 Android 版本。安装更新时，系统会显示安装确认。</p><div class="settings-version"><span>当前版本</span><strong>${escapeHTML(version)}</strong></div><div class="settings-actions"><button class="secondary-button" type="button" data-action="check-update"><i data-lucide="refresh-cw"></i>检查更新</button></div></section>
@@ -740,7 +740,7 @@
   window.importBackupJson = (content) => importDataText(content);
 
   scheduleSync = window.createScheduleSync?.({
-    config: window.FIREBASE_SYNC_CONFIG,
+    config: window.CLOUDBASE_SYNC_CONFIG,
     onRecords: mergeScheduleRecords,
     onStatus: (status) => {
       scheduleSyncStatus = status;
