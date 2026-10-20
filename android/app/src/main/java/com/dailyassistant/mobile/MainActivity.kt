@@ -77,16 +77,6 @@ class MainActivity : Activity() {
         handleInstallIntent(intent)
     }
 
-    override fun onResume() {
-        super.onResume()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val alarmManager = getSystemService(AlarmManager::class.java)
-            val allowed = alarmManager.canScheduleExactAlarms()
-            if (allowed && !exactAlarmsPreviouslyAllowed) ReminderScheduler.rescheduleAll(this)
-            exactAlarmsPreviouslyAllowed = allowed
-        }
-    }
-
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQUEST_NOTIFICATIONS) return
@@ -163,6 +153,12 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = getSystemService(AlarmManager::class.java)
+            val allowed = alarmManager.canScheduleExactAlarms()
+            if (allowed && !exactAlarmsPreviouslyAllowed) ReminderScheduler.rescheduleAll(this)
+            exactAlarmsPreviouslyAllowed = allowed
+        }
         val downloadId = pendingInstallId ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) {
             pendingInstallId = null
