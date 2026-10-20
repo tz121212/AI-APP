@@ -32,7 +32,9 @@ jobs:
             echo "Unable to locate sdkmanager under ${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
             exit 1
           fi
+          set +o pipefail
           yes | "$sdkmanager_bin" --licenses > /dev/null
+          set -o pipefail
           "$sdkmanager_bin" --install "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -69,7 +71,9 @@ jobs:
             echo "Unable to locate sdkmanager under ${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
             exit 1
           fi
+          set +o pipefail
           yes | "$sdkmanager_bin" --licenses > /dev/null
+          set -o pipefail
           "$sdkmanager_bin" --install "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
