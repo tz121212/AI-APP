@@ -2,6 +2,7 @@
 .idea/
 *.iml
 node_modules/
+.env.local
 
 android/.gradle/
 android/local.properties

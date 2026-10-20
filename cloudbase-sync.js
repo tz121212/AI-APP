@@ -2,20 +2,28 @@
   const AUTH_KEY = 'daily-assistant-cloudbase-auth-v1';
   const PENDING_KEY = 'daily-assistant-sync-pending-v1';
   const DEVICE_KEY = 'daily-assistant-sync-device-v1';
-  const COLLECTION = 'scheduleRecords';
+  const TABLE = 'schedule_records';
+  const POLL_INTERVAL_MS = 5000;
+  const POLL_OVERLAP_MS = 5000;
 
   function createScheduleSync({ config, onRecords, onStatus }) {
     const env = String(config?.env || '').trim();
     const region = String(config?.region || 'ap-shanghai').trim();
-    const configured = Boolean(env && region && typeof globalThis.createCloudBaseApp === 'function');
+    const accessKey = String(config?.accessKey || '').trim();
+    const configured = Boolean(env && region && accessKey && typeof globalThis.createCloudBaseApp === 'function');
+    const host = typeof window === 'undefined' ? globalThis : window;
+    const documentRef = host.document || globalThis.document;
     let app = null;
     let auth = null;
-    let collection = null;
-    let listener = null;
-    let account = readJSON(AUTH_KEY, {}).account || '';
+    let db = null;
+    let pollTimer = null;
+    let pollInFlight = null;
     let pendingFlush = null;
     let flushRequested = false;
     let hasInitialSnapshot = false;
+    let lastUpdatedAt = 0;
+    let connected = false;
+    let account = readJSON(AUTH_KEY, {}).account || '';
     let records = {};
     let status = configured ? '尚未连接云端' : '云端服务尚未配置';
     const deviceId = getDeviceId();
@@ -26,6 +34,7 @@
     }
 
     function setStatus(value) {
+      if (status === value) return;
       status = value;
       onStatus?.(value);
     }
@@ -45,61 +54,94 @@
 
     function ensureClient() {
       if (app) return;
-      app = globalThis.createCloudBaseApp({ env, region });
+      app = globalThis.createCloudBaseApp({ env, region, accessKey });
       auth = app.auth({ persistence: 'local' });
-      collection = app.database().collection(COLLECTION);
+      db = app.rdb();
+      if (!db) throw new Error('CloudBase PostgreSQL 客户端不可用');
     }
 
-    function stopWatch() {
-      listener?.close?.();
-      listener = null;
-      hasInitialSnapshot = false;
+    function normalizeRows(rows) {
+      return Object.fromEntries((Array.isArray(rows) ? rows : [])
+        .filter((row) => row && row.date && row.person)
+        .map((row) => {
+          const record = {
+            date: String(row.date),
+            person: String(row.person),
+            off: Boolean(row.off),
+            updatedAt: Number(row.client_updated_at || 0),
+            deviceId: String(row.device_id || ''),
+            serverUpdatedAt: String(row.updated_at || '')
+          };
+          return [`${record.date}_${record.person}`, record];
+        }));
     }
 
-    function normalizeSnapshot(snapshot) {
-      const documents = snapshot?.docs || {};
-      const entries = Array.isArray(documents)
-        ? documents.map((document) => [document?._id, document])
-        : Object.entries(documents);
-      return Object.fromEntries(entries
-        .filter(([, document]) => document && typeof document === 'object')
-        .map(([id, document]) => {
-          const { _id, ...record } = document;
-          return [String(_id || id), record];
-        })
-        .filter(([key, record]) => key && record.date && record.person));
+    function stopPolling() {
+      if (pollTimer !== null) clearInterval(pollTimer);
+      pollTimer = null;
     }
 
-    function applySnapshot(snapshot) {
-      records = normalizeSnapshot(snapshot);
-      setStatus('已连接，排班实时同步');
+    function isVisible() {
+      return !documentRef || documentRef.visibilityState !== 'hidden';
+    }
+
+    function startPolling() {
+      stopPolling();
+      if (!connected || !isVisible()) return;
+      refresh();
+      pollTimer = setInterval(() => refresh(), POLL_INTERVAL_MS);
+      pollTimer?.unref?.();
+    }
+
+    function applySnapshot(nextRecords) {
       const initial = !hasInitialSnapshot;
+      const changed = initial || Object.entries(nextRecords).some(([key, incoming]) => {
+        const current = records[key];
+        return !current || compareRecord(current, incoming) !== 0 || current.off !== incoming.off;
+      });
+      if (initial) records = nextRecords;
+      else Object.assign(records, nextRecords);
+      const maxUpdatedAt = Object.values(nextRecords).reduce((max, row) => {
+        const value = Date.parse(row.serverUpdatedAt || '');
+        return Number.isFinite(value) ? Math.max(max, value) : max;
+      }, lastUpdatedAt);
+      lastUpdatedAt = maxUpdatedAt;
+      setStatus(`已连接，排班每 ${POLL_INTERVAL_MS / 1000} 秒检查更新`);
       if (initial) {
         hasInitialSnapshot = true;
         const pending = getPending();
         Object.entries(pending).forEach(([key, local]) => {
           const remote = records[key];
           if (remote && compareRecord(local, remote) <= 0) delete pending[key];
-          else records[key] = local;
         });
         savePending(pending);
       }
-      onRecords?.({ ...records }, initial);
+      if (changed) onRecords?.({ ...records }, initial);
       flushPending();
     }
 
-    function openWatch() {
-      stopWatch();
-      records = {};
-      try {
-        listener = collection.watch({
-          onChange: applySnapshot,
-          onError: (error) => setStatus(`云端连接中断：${error?.message || '正在尝试重连'}`)
-        });
-      } catch (error) {
-        setStatus(`无法开启实时同步：${error.message || '请检查云端配置'}`);
-        throw error;
-      }
+    async function refresh() {
+      if (!db || !connected) return false;
+      if (pollInFlight) return pollInFlight;
+      const task = (async () => {
+        try {
+          let query = db.from(TABLE).select('*');
+          if (hasInitialSnapshot && lastUpdatedAt > 0) {
+            const overlap = new Date(Math.max(0, lastUpdatedAt - POLL_OVERLAP_MS)).toISOString();
+            query = query.gte('updated_at', overlap);
+          }
+          const result = await query.order('updated_at', { ascending: true });
+          if (result?.error) throw result.error;
+          if (!connected) return false;
+          applySnapshot(normalizeRows(result?.data));
+          return true;
+        } catch (error) {
+          setStatus(`云端同步暂不可用：${error?.message || '排班仍保存在本机'}`);
+          return false;
+        }
+      })();
+      pollInFlight = task.finally(() => { pollInFlight = null; });
+      return pollInFlight;
     }
 
     async function signIn(value, password) {
@@ -107,14 +149,18 @@
       const credential = value.includes('@') ? { email: value, password } : { username: value, password };
       const result = await auth.signInWithPassword(credential);
       if (result?.error) throw result.error;
-      const user = result?.data?.user;
+      const session = result?.data?.session;
+      if (!session || session.user?.is_anonymous) throw new Error('登录未建立有效账号会话，请检查账号和登录配置');
+      const user = session.user || result?.data?.user;
       account = user?.username || user?.email || value;
       localStorage.setItem(AUTH_KEY, JSON.stringify({ account }));
-      openWatch();
+      connected = true;
+      startPolling();
+      await refresh();
     }
 
     function flushPending() {
-      if (!collection || !hasInitialSnapshot) return Promise.resolve();
+      if (!db || !hasInitialSnapshot) return Promise.resolve();
       if (pendingFlush) {
         flushRequested = true;
         return pendingFlush;
@@ -132,7 +178,20 @@
           }
           for (const [key, record] of entries) {
             try {
-              const result = await collection.doc(key).set({ data: record });
+              const remote = records[key];
+              if (remote && compareRecord(record, remote) <= 0) {
+                const latest = getPending();
+                if (JSON.stringify(latest[key]) === JSON.stringify(record)) delete latest[key];
+                savePending(latest);
+                continue;
+              }
+              const result = await db.from(TABLE).upsert({
+                date: record.date,
+                person: record.person,
+                off: record.off,
+                client_updated_at: Number(record.updatedAt || 0),
+                device_id: String(record.deviceId || '')
+              }, { onConflict: 'owner_id,date,person' });
               if (result?.error) throw result.error;
               const latest = getPending();
               if (JSON.stringify(latest[key]) === JSON.stringify(record)) delete latest[key];
@@ -170,18 +229,23 @@
       }
       try {
         ensureClient();
-        const result = await auth.getUser();
+        const result = await auth.getSession();
         if (result?.error) throw result.error;
-        if (!result?.data?.user) {
+        const session = result?.data?.session;
+        if (!session || session.user?.is_anonymous) {
+          connected = false;
           setStatus('尚未连接云端');
           return;
         }
-        const user = result.data.user;
+        const user = session.user;
         account = user.username || user.email || account;
         if (account) localStorage.setItem(AUTH_KEY, JSON.stringify({ account }));
-        openWatch();
-        setStatus('正在连接云端…');
+        connected = true;
+        startPolling();
+        await refresh();
       } catch (error) {
+        connected = false;
+        stopPolling();
         setStatus(`云端暂不可用：${error?.message || '网络暂不可用，排班仍保存在本机'}`);
       }
     }
@@ -191,18 +255,24 @@
         setStatus('云端服务尚未配置');
         throw new Error(status);
       }
-      stopWatch();
+      stopPolling();
+      connected = false;
       setStatus('正在登录共享账号…');
       try {
         await signIn(String(value || '').trim(), password);
       } catch (error) {
+        connected = false;
+        stopPolling();
         setStatus(error?.message || '无法连接云端');
         throw error;
       }
     }
 
     async function disconnect() {
-      stopWatch();
+      connected = false;
+      stopPolling();
+      hasInitialSnapshot = false;
+      lastUpdatedAt = 0;
       account = '';
       localStorage.removeItem(AUTH_KEY);
       try { await auth?.signOut(); } catch {}
@@ -213,7 +283,7 @@
       const pending = getPending();
       pending[key] = record;
       savePending(pending);
-      if (collection && hasInitialSnapshot) flushPending();
+      if (db && hasInitialSnapshot) flushPending();
     }
 
     function getDeviceId() {
@@ -225,6 +295,19 @@
       return value;
     }
 
+    const handleVisibilityChange = () => {
+      if (isVisible()) startPolling();
+      else stopPolling();
+    };
+    const handleOnline = () => {
+      if (isVisible()) {
+        refresh();
+        if (connected && pollTimer === null) startPolling();
+      }
+    };
+    documentRef?.addEventListener?.('visibilitychange', handleVisibilityChange);
+    host.addEventListener?.('online', handleOnline);
+
     return {
       configured,
       connect,
@@ -232,6 +315,7 @@
       deviceId: () => deviceId,
       email: () => account,
       flushPending,
+      refresh,
       resume,
       replaceRecords,
       status: () => status,

@@ -12,7 +12,7 @@
 - 本地 JSON 数据导入与导出
 - Android 版本启动时检查更新，下载后交给系统安装器确认
 - 离线缓存的手机界面
-- 腾讯云开发 CloudBase 实时同步“军/震”休息排班；备忘与待办仍保存在本机
+- 腾讯云开发 CloudBase PostgreSQL 共享“军/震”休息排班；备忘与待办仍保存在本机
 
 ## 在本机预览
 
@@ -24,24 +24,16 @@ python -m http.server 4173
 
 打开 `http://localhost:4173`。浏览器预览的数据存储在当前浏览器中；系统级定时通知和 APK 更新只在 Android 应用里生效。
 
-## 配置排班实时同步
+## 配置排班同步
 
-1. 登录 [腾讯云开发 CloudBase](https://tcb.cloud.tencent.com/)，创建一个中国大陆地域的环境，建议选上海。记录环境 ID 和地域代码。
-2. 在身份认证中开启用户名密码或邮箱密码登录，创建一个内部共享账号，并关闭不需要的公开注册入口。两台手机使用同一个账号。
-3. 在文档型数据库中创建 `scheduleRecords` 集合，并设置以下安全规则。不要设置为公开读写。
-4. 把环境 ID 填入 `cloudbase-config.js` 的 `env`；如果选择的地域不是上海，同时将 `region` 改成控制台显示的地域代码。
-5. 安装新的签名 APK，在两台设备的“设置与备份 → 排班同步”中使用共享账号连接。
+1. 在 `cloudbase-config.js` 填入 CloudBase PostgreSQL 环境 ID 和地域代码。
+2. 在 CloudBase 身份认证中启用用户名密码登录，准备一个内部共享账号。两台手机使用同一个账号；不要把密码写进代码或提交到 GitHub。
+3. 在 CloudBase CLI 已登录的环境中运行 `tcb db pg migration up -e <环境ID>`，应用 `cloudbase/migrations` 中的排班表和权限迁移。
+4. 安装新的 APK，在两台设备的“设置与备份 → 排班同步”中使用共享账号连接。
 
-```json
-{
-  "read": "auth.uid == 'SHARED_ACCOUNT_UID'",
-  "write": "auth.uid == 'SHARED_ACCOUNT_UID'"
-}
-```
+本机 Android 构建从未提交的 `.env.local` 读取 `VITE_PUBLISHABLE_KEY`。GitHub Actions 构建需要在仓库 Settings → Secrets and variables → Actions 中添加同名 Secret。此 publishable key 会随 Android 客户端发布，只用于初始化 SDK；排班表另由账号会话和 RLS 隔离。
 
-把规则中的 `SHARED_ACCOUNT_UID` 替换为控制台里共享账号的用户 ID。这样数据库只允许这一个内部账号访问排班。
-
-客户端使用 CloudBase SDK 的账号密码认证和数据库 `watch()` 实时监听。SDK 已打包在 APK 内，手机运行时不需要从外部 CDN 下载。登录密码不会保存；CloudBase SDK 会在本机维护登录会话。首次连接时，本机已有的休息排班会合并到云端。备忘和待办仍只保存在本机。
+客户端通过 CloudBase SDK 的账号密码认证和 PostgreSQL `app.rdb()` 读写排班表。当前 CloudBase PostgreSQL Realtime 尚未正式上线，因此 App 在前台约每 5 秒查询一次，回到前台时立即查询；后台挂起时不保证即时更新。登录密码不会保存，CloudBase SDK 会在本机维护登录会话。首次连接时，本机已有的休息排班会合并到云端。备忘和待办仍只保存在本机。
 
 CloudBase SDK 更新或修改 `cloudbase-entry.js` 后，运行 `npm ci` 和 `npm run build:cloudbase` 重新生成本地 SDK 资源，再构建 Android APK。GitHub Actions 会验证同步逻辑并重新打包 SDK。
 

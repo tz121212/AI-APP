@@ -1,4 +1,5 @@
 window.CLOUDBASE_SYNC_CONFIG = {
-  env: '',
-  region: 'ap-shanghai'
+  env: 'jandz-d7gyvxev845ba48a0',
+  region: 'ap-shanghai',
+  accessKey: ''
 };

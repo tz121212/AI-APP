@@ -10,8 +10,7 @@ global.localStorage = {
 };
 
 const writes = [];
-let watchOptions;
-let closed = false;
+const remoteRows = new Map();
 let credentials;
 let cloudbaseConfig;
 let currentUser = null;
@@ -25,28 +24,45 @@ const createMockApp = (config) => {
         signInWithPassword: async (value) => {
           credentials = value;
           currentUser = { username: 'sync-user', email: 'sync@example.com' };
-          return { data: { user: currentUser }, error: null };
+          return { data: { user: currentUser, session: { user: currentUser } }, error: null };
         },
-        getUser: async () => ({ data: { user: currentUser }, error: null }),
+        getSession: async () => ({ data: { session: currentUser ? { user: currentUser } : null }, error: null }),
         signOut: async () => { currentUser = null; return { data: {}, error: null }; }
       };
     },
-    database: () => ({
-      collection: (name) => {
-        assert.equal(name, 'scheduleRecords');
+    rdb: () => ({
+      from: (table) => {
+        assert.equal(table, 'schedule_records');
         return {
-          watch: (options) => {
-            watchOptions = options;
-            return { close: () => { closed = true; } };
-          },
-          doc: (id) => ({ set: async ({ data }) => {
+          select: () => ({
+            gte: (field, value) => ({
+              order: async (orderField, options) => {
+                assert.equal(field, 'updated_at');
+                assert.equal(orderField, 'updated_at');
+                assert.deepEqual(options, { ascending: true });
+                return {
+                  data: [...remoteRows.values()].filter((row) => row.updated_at >= value),
+                  error: null
+                };
+              }
+            }),
+            order: async (field, options) => {
+              assert.equal(field, 'updated_at');
+              assert.deepEqual(options, { ascending: true });
+              return { data: [...remoteRows.values()], error: null };
+            }
+          }),
+          upsert: async (record, options) => {
             if (failedWrites > 0) {
               failedWrites -= 1;
               throw new Error('network unavailable');
             }
-            writes.push({ id, data });
-            return { data: {}, error: null };
-          } })
+            assert.deepEqual(options, { onConflict: 'owner_id,date,person' });
+            const key = `${record.date}_${record.person}`;
+            writes.push({ key, record });
+            remoteRows.set(key, { ...record, updated_at: new Date(record.client_updated_at).toISOString() });
+            return { data: null, error: null };
+          }
         };
       }
     })
@@ -56,8 +72,7 @@ const createMockApp = (config) => {
 beforeEach(() => {
   storage.clear();
   writes.length = 0;
-  watchOptions = null;
-  closed = false;
+  remoteRows.clear();
   credentials = null;
   cloudbaseConfig = null;
   currentUser = null;
@@ -67,72 +82,99 @@ beforeEach(() => {
 
 require(path.join(__dirname, '..', 'cloudbase-sync.js'));
 
-test('logs in, merges live schedule records, and writes one changed record', async (t) => {
+test('logs in, reads PostgreSQL schedule rows, and upserts a changed record', async (t) => {
   let sync;
-  t.after(() => {
-    sync?.disconnect();
+  t.after(() => sync?.disconnect());
+  remoteRows.set('2026-10-20_军', {
+    date: '2026-10-20', person: '军', off: true, client_updated_at: 123,
+    updated_at: '2026-10-20T00:00:00.000Z', device_id: 'device-a'
   });
   const snapshots = [];
   sync = global.createScheduleSync({
-    config: { env: 'test-env-123', region: 'ap-shanghai' },
+    config: { env: 'test-env-123', region: 'ap-shanghai', accessKey: 'test-publishable-key' },
     onRecords: (records, initial) => snapshots.push({ records, initial })
   });
 
   await sync.connect('sync@example.com', 'not-a-real-password');
-  assert.deepEqual(cloudbaseConfig, { env: 'test-env-123', region: 'ap-shanghai' });
+  assert.deepEqual(cloudbaseConfig, { env: 'test-env-123', region: 'ap-shanghai', accessKey: 'test-publishable-key' });
   assert.deepEqual(credentials, { email: 'sync@example.com', password: 'not-a-real-password' });
   assert.deepEqual(JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), { account: 'sync-user' });
   assert.equal('password' in JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), false);
-
-  watchOptions.onChange({ docs: {
-    '2026-10-20_军': { _id: '2026-10-20_军', date: '2026-10-20', person: '军', off: true, updatedAt: 123, deviceId: 'device-a' }
-  } });
   assert.equal(snapshots.at(-1).records['2026-10-20_军'].off, true);
   assert.equal(snapshots.at(-1).initial, true);
 
   sync.writeRecord('2026-10-21_震', { date: '2026-10-21', person: '震', off: true, updatedAt: 456, deviceId: 'device-a' });
   await sync.flushPending();
   assert.deepEqual(writes.at(-1), {
-    id: '2026-10-21_震',
-    data: { date: '2026-10-21', person: '震', off: true, updatedAt: 456, deviceId: 'device-a' }
+    key: '2026-10-21_震',
+    record: { date: '2026-10-21', person: '震', off: true, client_updated_at: 456, device_id: 'device-a' }
   });
   assert.deepEqual(JSON.parse(storage.get('daily-assistant-sync-pending-v1')), {});
-  await sync.disconnect();
-  assert.equal(closed, true);
 });
 
-test('resumes a saved account session and keeps queued records until the initial snapshot', async (t) => {
+test('resumes a saved session and queues local rows until the first PostgreSQL read', async (t) => {
   let sync;
-  t.after(() => {
-    sync?.disconnect();
-  });
+  t.after(() => sync?.disconnect());
   currentUser = { username: 'sync-user', email: 'sync@example.com' };
   storage.set('daily-assistant-cloudbase-auth-v1', JSON.stringify({ account: 'sync-user' }));
   storage.set('daily-assistant-sync-pending-v1', JSON.stringify({
     '2026-10-22_军': { date: '2026-10-22', person: '军', off: true, updatedAt: 800, deviceId: 'device-a' }
   }));
-  sync = global.createScheduleSync({ config: { env: 'test-env-123' } });
+  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
 
   await sync.resume();
-  watchOptions.onChange({ docs: {} });
   await sync.flushPending();
-  assert.equal(writes.at(-1).id, '2026-10-22_军');
+  assert.equal(writes.at(-1).key, '2026-10-22_军');
   assert.equal(JSON.parse(storage.get('daily-assistant-sync-pending-v1'))['2026-10-22_军'], undefined);
 });
 
-test('retries queued records after a later live snapshot restores connectivity', async (t) => {
+test('keeps and uploads a newer pending record when the initial PostgreSQL snapshot is empty', async (t) => {
   let sync;
   t.after(() => sync?.disconnect());
-  sync = global.createScheduleSync({ config: { env: 'test-env-123' } });
-  await sync.connect('sync@example.com', 'not-a-real-password');
-  watchOptions.onChange({ docs: {} });
-  failedWrites = 1;
-  sync.writeRecord('2026-10-23_震', { date: '2026-10-23', person: '震', off: true, updatedAt: 900, deviceId: 'device-a' });
-  await sync.flushPending();
-  assert.equal(JSON.parse(storage.get('daily-assistant-sync-pending-v1'))['2026-10-23_震'].off, true);
+  currentUser = { username: 'sync-user', email: 'sync@example.com' };
+  storage.set('daily-assistant-sync-pending-v1', JSON.stringify({
+    '2026-10-22_军': { date: '2026-10-22', person: '军', off: true, updatedAt: 800, deviceId: 'device-a' }
+  }));
+  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
 
-  watchOptions.onChange({ docs: {} });
+  await sync.resume();
   await sync.flushPending();
-  assert.equal(writes.at(-1).id, '2026-10-23_震');
+  assert.equal(writes.at(-1).key, '2026-10-22_军');
+  assert.deepEqual(JSON.parse(storage.get('daily-assistant-sync-pending-v1')), {});
+});
+
+test('pulls another device update on the next refresh', async (t) => {
+  let sync;
+  t.after(() => sync?.disconnect());
+  const snapshots = [];
+  sync = global.createScheduleSync({
+    config: { env: 'test-env-123', accessKey: 'test-publishable-key' },
+    onRecords: (records, initial) => snapshots.push({ records, initial })
+  });
+  await sync.connect('sync@example.com', 'not-a-real-password');
+  remoteRows.set('2026-10-23_震', {
+    date: '2026-10-23', person: '震', off: true, client_updated_at: 900,
+    updated_at: new Date().toISOString(), device_id: 'device-b'
+  });
+
+  await sync.refresh();
+  assert.equal(snapshots.at(-1).records['2026-10-23_震'].off, true);
+  assert.equal(snapshots.at(-1).records['2026-10-23_震'].deviceId, 'device-b');
+  assert.equal(snapshots.at(-1).initial, false);
+});
+
+test('retains queued records after an upsert failure and retries after a later refresh', async (t) => {
+  let sync;
+  t.after(() => sync?.disconnect());
+  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
+  await sync.connect('sync@example.com', 'not-a-real-password');
+  failedWrites = 1;
+  sync.writeRecord('2026-10-24_震', { date: '2026-10-24', person: '震', off: true, updatedAt: 1000, deviceId: 'device-a' });
+  await sync.flushPending();
+  assert.equal(JSON.parse(storage.get('daily-assistant-sync-pending-v1'))['2026-10-24_震'].off, true);
+
+  await sync.refresh();
+  await sync.flushPending();
+  assert.equal(writes.at(-1).key, '2026-10-24_震');
   assert.deepEqual(JSON.parse(storage.get('daily-assistant-sync-pending-v1')), {});
 });

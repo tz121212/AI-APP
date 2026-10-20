@@ -12,6 +12,16 @@ val releaseKeyAlias = providers.gradleProperty("releaseKeyAlias").orNull
 val releaseKeyPassword = providers.gradleProperty("releaseKeyPassword").orNull
 val generatedWebAssets = layout.buildDirectory.dir("generated/assets/web")
 val webSource = rootProject.projectDir.parentFile
+val cloudbasePublishableKey = providers.environmentVariable("VITE_PUBLISHABLE_KEY").orElse(
+    providers.provider {
+        webSource.resolve(".env.local").takeIf { it.isFile }?.readLines()
+            ?.firstOrNull { it.trim().startsWith("VITE_PUBLISHABLE_KEY=") }
+            ?.substringAfter('=')?.trim()?.trim('"', '\'') ?: ""
+    }
+).get()
+if (gradle.startParameter.taskNames.any { it.contains("assemble", ignoreCase = true) } && cloudbasePublishableKey.isBlank()) {
+    throw GradleException("Set VITE_PUBLISHABLE_KEY in .env.local or the build environment before building an APK")
+}
 
 android {
     namespace = "com.dailyassistant.mobile"
@@ -71,9 +81,15 @@ dependencies {
 
 val copyWebAssets by tasks.registering(Copy::class) {
     from(webSource) {
-        include("index.html", "styles.css", "app.js", "cloudbase-config.js", "cloudbase-sync.js", "manifest.webmanifest", "service-worker.js", "assets/**")
+        include("index.html", "styles.css", "app.js", "cloudbase-sync.js", "manifest.webmanifest", "service-worker.js", "assets/**")
     }
     into(generatedWebAssets.map { it.dir("web") })
+    doLast {
+        val escapedKey = cloudbasePublishableKey.replace("\\", "\\\\").replace("'", "\\'")
+        generatedWebAssets.get().file("web/cloudbase-config.js").asFile.writeText(
+            "window.CLOUDBASE_SYNC_CONFIG = { env: 'jandz-d7gyvxev845ba48a0', region: 'ap-shanghai', accessKey: '$escapedKey' };\n"
+        )
+    }
 }
 
 tasks.named("preBuild") {
