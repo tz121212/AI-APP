@@ -19,6 +19,14 @@ val cloudbasePublishableKey = providers.environmentVariable("VITE_PUBLISHABLE_KE
             ?.substringAfter('=')?.trim()?.trim('"', '\'') ?: ""
     }
 ).get()
+val cloudbaseAnonymousAccessToken = providers.environmentVariable("CLOUDBASE_ACCESS_TOKEN").orElse(
+    providers.provider {
+        webSource.resolve(".env.local").takeIf { it.isFile }?.readLines()
+            ?.firstOrNull { it.trim().startsWith("CLOUDBASE_ACCESS_TOKEN=") }
+            ?.substringAfter('=')?.trim()?.trim('"', '\'') ?: ""
+    }
+).get()
+fun escapeBuildConfig(value: String): String = value.replace("\\", "\\\\").replace("\"", "\\\"")
 if (gradle.startParameter.taskNames.any { it.contains("assemble", ignoreCase = true) } && cloudbasePublishableKey.isBlank()) {
     throw GradleException("Set VITE_PUBLISHABLE_KEY in .env.local or the build environment before building an APK")
 }
@@ -39,6 +47,8 @@ android {
         versionCode = appVersionCode
         versionName = appVersionName
         buildConfigField("String", "UPDATE_MANIFEST_URL", "\"$updateManifestUrl\"")
+        buildConfigField("String", "CLOUDBASE_ENV_ID", "\"jandz-d7gyvxev845ba48a0\"")
+        buildConfigField("String", "CLOUDBASE_ACCESS_TOKEN", "\"${escapeBuildConfig(cloudbaseAnonymousAccessToken)}\"")
     }
 
     buildFeatures {
@@ -77,6 +87,9 @@ android {
 
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.code.gson:gson:2.10.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
 
 val copyWebAssets by tasks.registering(Copy::class) {

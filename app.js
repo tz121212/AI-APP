@@ -354,9 +354,9 @@
     const version = window.AndroidBridge?.getAppVersion?.() || '网页预览版';
     const syncConfigured = Boolean(scheduleSync?.configured);
     root.innerHTML = `<div class="settings-view">
-      <section class="settings-section"><h2>排班同步</h2><p>只同步军、震的休息安排。两台设备使用同一个 CloudBase 账号，应用打开时约每 5 秒检查一次更新；返回应用时会立即同步。</p><p class="sync-status-line" data-schedule-sync-status aria-live="polite">${escapeHTML(scheduleSyncStatus)}</p><form class="sync-form" id="schedule-sync-form"><label class="field-grow"><span class="field-label">共享邮箱或用户名</span><input class="text-field" name="identifier" type="text" autocomplete="username" placeholder="CloudBase 邮箱或用户名" value="${escapeHTML(scheduleSync?.account() || '')}" required ${syncConfigured ? '' : 'disabled'} /></label><label class="field-grow"><span class="field-label">账号密码</span><input class="text-field" name="password" type="password" autocomplete="current-password" required ${syncConfigured ? '' : 'disabled'} /></label><button class="primary-button" type="submit" ${syncConfigured ? '' : 'disabled'}><i data-lucide="cloud"></i>连接同步</button></form><div class="settings-actions"><button class="secondary-button" type="button" data-action="disconnect-schedule-sync" ${scheduleSync?.account() ? '' : 'disabled'}><i data-lucide="cloud-off"></i>断开同步</button></div></section>
+      <section class="settings-section"><h2>排班同步</h2><p>只同步军、震的休息安排。两台设备使用同一个 CloudBase 账号，应用打开时约每 5 秒检查一次更新；返回应用时会立即同步。</p><p>请使用环境“身份认证”中创建的用户名和密码；腾讯云控制台账号不能直接登录，也不需要填写邮箱。</p><p class="sync-status-line" data-schedule-sync-status aria-live="polite">${escapeHTML(scheduleSyncStatus)}</p><form class="sync-form" id="schedule-sync-form"><label class="field-grow"><span class="field-label">CloudBase 用户名</span><input class="text-field" name="identifier" type="text" autocomplete="username" placeholder="输入 CloudBase 用户名" value="${escapeHTML(scheduleSync?.account() || '')}" required ${syncConfigured ? '' : 'disabled'} /></label><label class="field-grow"><span class="field-label">账号密码</span><input class="text-field" name="password" type="password" autocomplete="current-password" required ${syncConfigured ? '' : 'disabled'} /></label><button class="primary-button" type="submit" ${syncConfigured ? '' : 'disabled'}><i data-lucide="cloud"></i>连接同步</button></form><div class="settings-actions"><button class="secondary-button" type="button" data-action="disconnect-schedule-sync" ${scheduleSync?.account() ? '' : 'disabled'}><i data-lucide="cloud-off"></i>断开同步</button></div></section>
       <section class="settings-section"><h2>数据备份</h2><p>备忘和待办只保存在当前设备。你可以导出 JSON 文件留存，或从备份文件恢复。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="export"><i data-lucide="download"></i>导出数据</button><button class="secondary-button" type="button" data-action="import"><i data-lucide="upload"></i>导入备份</button></div></section>
-      <section class="settings-section"><h2>提醒通知</h2><p>可在待办中单独开启闹钟提醒。到点会响铃，通知会一直保留到待办完成或取消。首次开启时，请允许通知权限。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="request-notification"><i data-lucide="bell-ring"></i>开启通知权限</button></div></section>
+      <section class="settings-section"><h2>提醒通知</h2><p>有日期和时间的待办会发送通知并保留到完成或取消；勾选闹钟提醒后会循环响铃。请允许系统通知权限。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="request-notification"><i data-lucide="bell-ring"></i>开启通知权限</button></div></section>
       <section class="settings-section"><h2>应用更新</h2><p>检查内部发布的 Android 版本。安装更新时，系统会显示安装确认。</p><div class="settings-version"><span>当前版本</span><strong>${escapeHTML(version)}</strong></div><div class="settings-actions"><button class="secondary-button" type="button" data-action="check-update"><i data-lucide="refresh-cw"></i>检查更新</button></div></section>
       <section class="settings-section"><h2>本机数据</h2><p>清除当前设备的备忘和待办，并清除共享休息安排。此操作无法撤销。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="clear-data"><i data-lucide="trash-2"></i>清除所有数据</button></div></section>
     </div>`;
@@ -420,12 +420,12 @@
     const canEnable = Boolean(form.elements.dueDate.value && form.elements.dueTime.value);
     reminderCheckbox.disabled = !canEnable;
     if (!canEnable) reminderCheckbox.checked = false;
-    document.getElementById('reminder-help').textContent = canEnable ? '到点响铃，并保持通知直到完成待办' : '选择日期和时间后可开启';
+    document.getElementById('reminder-help').textContent = canEnable ? '默认发送通知；勾选后到点响铃并保持提醒' : '选择日期和时间后可开启';
   }
 
   function updateReminder(task) {
     removeReminder(task.id);
-    if (task.completed || !taskReminderEnabled(task) || !task.dueDate || !task.dueTime) return;
+    if (task.completed || !task.dueDate || !task.dueTime) return;
     let trigger = new Date(`${task.dueDate}T${task.dueTime}:00`);
     if (!Number.isFinite(trigger.getTime())) return;
     while (trigger.getTime() <= Date.now() && task.repeat && task.repeat !== 'none') {
@@ -437,7 +437,7 @@
     const triggerAt = trigger.getTime();
     if (triggerAt <= Date.now()) return;
     if (window.AndroidBridge?.scheduleReminder) {
-      window.AndroidBridge.scheduleReminder(String(task.id), task.title, task.body || '有一项待办需要处理', triggerAt, task.repeat || 'none');
+      window.AndroidBridge.scheduleReminder(String(task.id), task.title, task.body || '有一项待办需要处理', triggerAt, task.repeat || 'none', taskReminderEnabled(task));
       return;
     }
     if (!('Notification' in window)) return;
@@ -522,7 +522,7 @@
       if (existing) Object.assign(existing, task);
       else state.tasks.push(task);
       updateReminder(task);
-      if (reminderEnabled) window.AndroidBridge?.requestNotificationPermission?.();
+      if (task.dueDate && task.dueTime) window.AndroidBridge?.requestTaskNotificationPermission?.(reminderEnabled);
     } else {
       const existing = state.notes.find((note) => note.id === id);
       const note = {

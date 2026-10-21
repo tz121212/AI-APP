@@ -8,9 +8,9 @@ import android.os.Build
 import org.json.JSONObject
 
 object ReminderScheduler {
-    fun schedule(context: Context, id: String, title: String, body: String, triggerAt: Long, repeat: String) {
+    fun schedule(context: Context, id: String, title: String, body: String, triggerAt: Long, repeat: String, alarm: Boolean = true) {
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val pending = reminderIntent(context, id, title, body, repeat)
+        val pending = reminderIntent(context, id, title, body, repeat, alarm)
         val trigger = maxOf(triggerAt, System.currentTimeMillis() + 1000)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && manager.canScheduleExactAlarms()) {
             manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pending)
@@ -23,6 +23,7 @@ object ReminderScheduler {
             put("body", body)
             put("triggerAt", triggerAt)
             put("repeat", repeat)
+            put("alarm", alarm)
         }
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().putString(id, saved.toString()).apply()
     }
@@ -46,7 +47,7 @@ object ReminderScheduler {
         reminders.forEach { value ->
             try {
                 val reminder = JSONObject(value)
-                schedule(context, reminder.getString("id"), reminder.optString("title"), reminder.optString("body"), reminder.getLong("triggerAt"), reminder.optString("repeat", "none"))
+                schedule(context, reminder.getString("id"), reminder.optString("title"), reminder.optString("body"), reminder.getLong("triggerAt"), reminder.optString("repeat", "none"), reminder.optBoolean("alarm", true))
             } catch (_: Exception) {
                 // Ignore invalid persisted reminder data and continue restoring the rest.
             }
@@ -55,6 +56,7 @@ object ReminderScheduler {
 
     fun scheduleNext(context: Context, intent: Intent) {
         val repeat = intent.getStringExtra(MainActivity.EXTRA_REPEAT) ?: "none"
+        val alarm = intent.getBooleanExtra(MainActivity.EXTRA_ALARM, true)
         if (repeat == "none") {
             intent.getStringExtra(MainActivity.EXTRA_TASK_ID)?.let { removeSaved(context, it) }
             return
@@ -74,16 +76,18 @@ object ReminderScheduler {
             intent.getStringExtra(MainActivity.EXTRA_TASK_TITLE) ?: "待办提醒",
             intent.getStringExtra(MainActivity.EXTRA_TASK_BODY) ?: "有一项待办需要处理",
             calendar.timeInMillis,
-            repeat
+            repeat,
+            alarm
         )
     }
 
-    private fun reminderIntent(context: Context, id: String, title: String, body: String, repeat: String): PendingIntent {
+    private fun reminderIntent(context: Context, id: String, title: String, body: String, repeat: String, alarm: Boolean): PendingIntent {
         val intent = Intent(context, ReminderReceiver::class.java).apply {
             putExtra(MainActivity.EXTRA_TASK_ID, id)
             putExtra(MainActivity.EXTRA_TASK_TITLE, title)
             putExtra(MainActivity.EXTRA_TASK_BODY, body)
             putExtra(MainActivity.EXTRA_REPEAT, repeat)
+            putExtra(MainActivity.EXTRA_ALARM, alarm)
         }
         return PendingIntent.getBroadcast(context, id.hashCode() and 0x7fffffff, intent, flags())
     }

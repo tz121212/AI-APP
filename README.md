@@ -7,13 +7,13 @@
 - 今日待办、逾期统计、完成状态和近期备忘
 - 备忘分类、置顶、搜索、编辑和删除
 - 日历月视图、按日期查看待办与备忘，并支持“军/震”两人休息排班
-- 待办日期、时间、重复周期，以及可单独开关的 Android 闹钟通知
+- 待办日期、时间、重复周期；未勾选闹钟时发送持续的通知栏消息，勾选后播放循环系统闹铃
 - 重复待办完成后自动生成下一次；提醒在设备重启后恢复
 - 本地 JSON 数据导入与导出
-- Android 版本启动时检查更新，下载后交给系统安装器确认
+- Android 版本启动时检查更新；系统 DownloadManager 在通知栏显示下载进度，完成或失败时发送结果通知，下载完成后交给系统安装器确认
 - 离线缓存的手机界面
 - 腾讯云开发 CloudBase PostgreSQL 共享“军/震”休息排班；备忘与待办仍保存在本机
-- 待办可设置带系统闹钟铃声的提醒，通知会持续保留到待办完成或取消
+- 待办普通消息和闹钟提醒都会持续保留到待办完成或取消；闹钟提醒由前台服务播放铃声
 - 已完成或已过期超过一个月的历史待办，以及超过一个月未编辑的备忘，会自动清理；未安排日期的待办保留
 
 ## 在本机预览
@@ -33,9 +33,11 @@ python -m http.server 4173
 3. 在 CloudBase CLI 已登录的环境中运行 `tcb db pg migration up -e <环境ID>`，应用 `cloudbase/migrations` 中的排班表和权限迁移。
 4. 安装新的 APK，在两台设备的“设置与备份 → 排班同步”中使用共享账号连接。
 
-本机 Android 构建从未提交的 `.env.local` 读取 `VITE_PUBLISHABLE_KEY`。GitHub Actions 构建需要在仓库 Settings → Secrets and variables → Actions 中添加同名 Secret。此 publishable key 会随 Android 客户端发布，只用于初始化 SDK；排班表另由账号会话和 RLS 隔离。
+本机 Android 构建从未提交的 `.env.local` 读取 `VITE_PUBLISHABLE_KEY` 和 CloudBase 接入指引中的匿名令牌 `CLOUDBASE_ACCESS_TOKEN`。GitHub Actions 构建需要在仓库 Settings → Secrets and variables → Actions 中添加同名 Secret。两个值都用于客户端连接 CloudBase，不授予 service role 权限；排班表另由账号会话和 RLS 隔离。匿名令牌只用于 `/auth/v1/signin` 换取用户会话，不能替代用户名密码。
 
-客户端通过 CloudBase SDK 的邮箱或用户名密码认证和 PostgreSQL `app.rdb()` 读写排班表，认证请求固定走环境所在地域的 Cloud API，以兼容 Android WebView 的跨域限制。当前 CloudBase PostgreSQL Realtime 尚未正式上线，因此 App 在前台约每 5 秒查询一次，回到前台时立即查询；后台挂起时不保证即时更新。登录密码不会保存，CloudBase SDK 会在本机维护登录会话。首次连接时，本机已有的休息排班会合并到云端。备忘和待办仍只保存在本机。
+客户端通过 CloudBase Web JS SDK 3.10.3 的邮箱或用户名密码认证和 PostgreSQL `app.rdb()` 读写排班表，认证请求固定走环境所在地域的 Cloud API，以兼容 Android WebView 的跨域限制。当前 CloudBase PostgreSQL Realtime 尚未正式上线，因此 App 在前台约每 5 秒查询一次，回到前台时立即查询；后台挂起时不保证即时更新。登录密码不会保存，CloudBase SDK 会在本机维护登录会话。登录框中的账号必须是 CloudBase 当前环境“身份认证”里创建的邮箱或用户名，腾讯云控制台账号不能直接登录。首次连接时，本机已有的休息排班会合并到云端。备忘和待办仍只保存在本机。
+
+项目使用 Kotlin 编写 Android 原生容器，界面和业务交互使用 HTML、CSS、JavaScript，WebView 负责承载界面，Gradle Kotlin DSL 负责 Android 构建。
 
 CloudBase SDK 更新或修改 `cloudbase-entry.js` 后，运行 `npm ci` 和 `npm run build:cloudbase` 重新生成本地 SDK 资源，再构建 Android APK。GitHub Actions 会验证同步逻辑并重新打包 SDK。
 

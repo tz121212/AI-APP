@@ -5,12 +5,16 @@ import android.app.Activity
 import android.app.AlarmManager
 import android.app.AlertDialog
 import android.app.DownloadManager
+import android.app.Notification
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -23,6 +27,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.webkit.WebViewAssetLoader
+import kotlinx.coroutines.runBlocking
 import java.text.SimpleDateFormat
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -35,10 +40,15 @@ class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var assetLoader: WebViewAssetLoader
     private val worker = Executors.newSingleThreadExecutor()
+    private val cloudBaseClient by lazy {
+        CloudBaseClient(BuildConfig.CLOUDBASE_ENV_ID, BuildConfig.CLOUDBASE_ACCESS_TOKEN)
+    }
     private var pendingInstallId: Long? = null
+    private var pendingUpdateDownload: Pair<String, String>? = null
     @Volatile private var pendingBackup: String? = null
     private var legacyStorageInjectionInProgress = false
     private var exactAlarmsPreviouslyAllowed = false
+    private var requestExactAlarmAfterNotification = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,9 +89,20 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQUEST_NOTIFICATIONS) return
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) requestExactAlarmAccess()
-        else toastToWeb("未开启通知权限，待办闹钟无法显示")
+        val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        when (requestCode) {
+            REQUEST_NOTIFICATIONS -> {
+                if (granted && requestExactAlarmAfterNotification) requestExactAlarmAccess()
+                else if (!granted) toastToWeb("未开启通知权限，待办提醒不会显示")
+                requestExactAlarmAfterNotification = false
+            }
+            REQUEST_UPDATE_NOTIFICATIONS -> {
+                val pending = pendingUpdateDownload
+                pendingUpdateDownload = null
+                if (granted && pending != null) enqueueUpdateDownload(pending.first, pending.second)
+                else if (!granted) toastToWeb("未允许通知权限，已取消更新下载")
+            }
+        }
     }
 
     private fun requestExactAlarmAccess() {
@@ -247,16 +268,26 @@ class MainActivity : Activity() {
     }
 
     private fun downloadUpdate(apkUrl: String, versionName: String) {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            pendingUpdateDownload = apkUrl to versionName
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_UPDATE_NOTIFICATIONS)
+            return
+        }
+        enqueueUpdateDownload(apkUrl, versionName)
+    }
+
+    private fun enqueueUpdateDownload(apkUrl: String, versionName: String) {
         try {
             val request = DownloadManager.Request(Uri.parse(apkUrl))
                 .setTitle("日常 $versionName")
                 .setDescription("正在下载内部更新")
                 .setMimeType("application/vnd.android.package-archive")
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "daily-assistant-update.apk")
-            val id = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+                .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "daily-assistant-update-${System.currentTimeMillis()}.apk")
+            (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
             toastToWeb("更新包已加入下载")
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            UpdateDownloadReceiver.notifyFailure(this, "无法开始下载更新包", error.message ?: "请检查网络和下载空间")
             toastToWeb("无法开始下载更新包")
         }
     }
@@ -277,8 +308,8 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
-        fun scheduleReminder(id: String, title: String, body: String, triggerAt: Long, repeat: String) {
-            ReminderScheduler.schedule(this@MainActivity, id, title, body, triggerAt, repeat)
+        fun scheduleReminder(id: String, title: String, body: String, triggerAt: Long, repeat: String, alarm: Boolean) {
+            ReminderScheduler.schedule(this@MainActivity, id, title, body, triggerAt, repeat, alarm)
         }
 
         @JavascriptInterface
@@ -288,13 +319,44 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun requestNotificationPermission() {
+            requestTaskNotificationPermission(false)
+        }
+
+        @JavascriptInterface
+        fun requestTaskNotificationPermission(alarm: Boolean) {
             runOnUiThread {
+                requestExactAlarmAfterNotification = alarm
                 if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
                 } else {
-                    requestExactAlarmAccess()
+                    if (alarm) requestExactAlarmAccess()
                     toastToWeb("通知权限已开启")
                 }
+            }
+        }
+
+        @JavascriptInterface
+        fun isNativeCloudBaseLoginConfigured(): Boolean = BuildConfig.CLOUDBASE_ACCESS_TOKEN.isNotBlank()
+
+        @JavascriptInterface
+        fun cloudBasePasswordLogin(username: String, password: String): String {
+            if (!isNativeCloudBaseLoginConfigured()) return "{\"configured\":false}"
+            if (username.isBlank() || password.isBlank()) return "{\"ok\":false,\"message\":\"请输入用户名和密码\"}"
+            return try {
+                val tokens = runBlocking { cloudBaseClient.signInWithPassword(username.trim(), password) }
+                JSONObject().apply {
+                    put("configured", true)
+                    put("ok", true)
+                    put("access_token", tokens.accessToken)
+                    put("refresh_token", tokens.refreshToken)
+                    put("user_id", tokens.userId)
+                }.toString()
+            } catch (error: Exception) {
+                JSONObject().apply {
+                    put("configured", true)
+                    put("ok", false)
+                    put("message", error.message ?: "CloudBase 登录失败")
+                }.toString()
             }
         }
 
@@ -346,10 +408,13 @@ class MainActivity : Activity() {
         const val EXTRA_TASK_TITLE = "task_title"
         const val EXTRA_TASK_BODY = "task_body"
         const val EXTRA_REPEAT = "repeat"
+        const val EXTRA_ALARM = "alarm"
+        const val TASK_MESSAGE_CHANNEL_ID = "daily_task_messages_v1"
         const val EXTRA_INSTALL_DOWNLOAD_ID = "install_download_id"
         const val REQUEST_NOTIFICATIONS = 3401
         const val REQUEST_SAVE_BACKUP = 3402
         const val REQUEST_IMPORT_BACKUP = 3403
+        const val REQUEST_UPDATE_NOTIFICATIONS = 3404
         private const val PREFERENCES = "daily_assistant_web_storage"
         private const val KEY_WEB_STORAGE_MIGRATED = "web_storage_migrated"
         private const val KEY_LEGACY_STORAGE_DATA = "legacy_storage_data"
@@ -370,11 +435,59 @@ class MainActivity : Activity() {
             }
         }
 
+        fun createTaskMessageChannel(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val manager = context.getSystemService(NotificationManager::class.java)
+                val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                val attributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                val channel = android.app.NotificationChannel(TASK_MESSAGE_CHANNEL_ID, "待办通知", android.app.NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = "未开启闹钟时的待办通知"
+                    setSound(sound, attributes)
+                    enableVibration(true)
+                }
+                manager.createNotificationChannel(channel)
+            }
+        }
+
+        fun postTaskMessageNotification(context: Context, id: String, title: String, body: String) {
+            createTaskMessageChannel(context)
+            val openApp = PendingIntent.getActivity(
+                context,
+                ReminderScheduler.notificationId(id),
+                Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+            )
+            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(context, TASK_MESSAGE_CHANNEL_ID)
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(context)
+            }.setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(Notification.BigTextStyle().bigText(body))
+                .setOngoing(true)
+                .setAutoCancel(false)
+                .setOnlyAlertOnce(true)
+                .setCategory(Notification.CATEGORY_REMINDER)
+                .setContentIntent(openApp)
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                @Suppress("DEPRECATION")
+                val defaults = Notification.DEFAULT_SOUND or Notification.DEFAULT_VIBRATE
+                builder.setDefaults(defaults)
+            }
+            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .notify(ReminderScheduler.notificationId(id), builder.build())
+        }
+
         fun createUpdateChannel(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val manager = context.getSystemService(NotificationManager::class.java)
                 val channel = android.app.NotificationChannel(UPDATE_CHANNEL_ID, "应用更新", android.app.NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "应用更新包下载完成提醒"
+                    description = "应用更新包下载进度、完成和失败提醒"
                 }
                 manager.createNotificationChannel(channel)
             }

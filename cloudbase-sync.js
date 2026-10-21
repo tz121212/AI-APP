@@ -149,19 +149,54 @@
       const identifier = String(value || '').trim();
       if (!identifier) throw new Error('请输入 CloudBase 邮箱或用户名');
       ensureClient();
-      const credentials = EMAIL_PATTERN.test(identifier)
+      const isEmail = EMAIL_PATTERN.test(identifier);
+      const credentials = isEmail
         ? { email: identifier, password }
         : { username: identifier, password };
-      const result = await auth.signInWithPassword(credentials);
-      if (result?.error) throw result.error;
+      let result;
+      const nativeLogin = !isEmail && globalThis.AndroidBridge?.isNativeCloudBaseLoginConfigured?.() && globalThis.AndroidBridge?.cloudBasePasswordLogin;
+      if (nativeLogin) {
+        let nativeResult;
+        try {
+          nativeResult = JSON.parse(globalThis.AndroidBridge.cloudBasePasswordLogin(identifier, password));
+        } catch (error) {
+          throw new Error(`Android 原生 CloudBase 登录响应无效：${error?.message || '未知错误'}`);
+        }
+        if (!nativeResult?.ok) throw loginError({ message: nativeResult?.message || '原生登录失败' }, false);
+        result = await auth.setSession({
+          access_token: nativeResult.access_token,
+          refresh_token: nativeResult.refresh_token
+        });
+      } else {
+        try {
+          result = await auth.signInWithPassword(credentials);
+        } catch (error) {
+          throw loginError(error, isEmail);
+        }
+      }
+      if (result?.error) throw loginError(result.error, isEmail);
       const session = result?.data?.session;
-      if (!session || session.user?.is_anonymous) throw new Error('登录未建立有效账号会话，请检查账号和登录配置');
+      if (!session || session.user?.is_anonymous) throw new Error('CloudBase 登录未建立有效会话。请确认身份认证账号属于当前环境，且对应密码登录方式已启用。');
       const user = session.user || result?.data?.user;
       account = identifier;
       localStorage.setItem(AUTH_KEY, JSON.stringify({ account }));
       connected = true;
       startPolling();
       await refresh();
+    }
+
+    function loginError(error, isEmail) {
+      const message = String(error?.message || '未知认证错误');
+      const code = String(error?.code || error?.category || error?.status || '').trim();
+      const detail = `${message}${code ? ` [${code}]` : ''}`;
+      if (/failed to fetch|networkerror|load failed|cloudbase fetch and xhr failed/i.test(message)) {
+        return new Error(`无法连接 CloudBase 登录服务：${detail}。请检查手机网络是否能访问腾讯云开发。`);
+      }
+      if (/invalid.*(login|credential|password)|invalid_credentials|user.*not.*found|email.*not.*found/i.test(`${code} ${message}`)) {
+        const method = isEmail ? '邮箱' : '用户名';
+        return new Error(`CloudBase 已拒绝${method}登录：${detail}。请使用环境「${env}」的“身份认证”中创建的账号；腾讯云控制台账号不能直接登录。`);
+      }
+      return new Error(`CloudBase 登录失败：${detail}`);
     }
 
     function flushPending() {
@@ -262,20 +297,16 @@
       }
       stopPolling();
       connected = false;
-      setStatus('正在登录共享账号…');
+      const identifier = String(value || '').trim();
+      setStatus(`正在使用 CloudBase ${EMAIL_PATTERN.test(identifier) ? '邮箱' : '用户名'}密码登录…`);
       try {
-        await signIn(String(value || '').trim(), password);
+        await signIn(identifier, password);
       } catch (error) {
         connected = false;
         stopPolling();
         const message = String(error?.message || '无法连接云端');
-        const displayMessage = /cloudbase fetch and xhr failed/i.test(message)
-          ? 'Android WebView 的 fetch 和 XHR 都无法连接 CloudBase。请切换手机 Wi-Fi/移动网络后重试；如仍失败，请检查手机网络是否能访问腾讯云开发。'
-          : /failed to fetch|networkerror|load failed/i.test(message)
-            ? '无法连接 CloudBase 登录服务（Failed to fetch）。请检查手机网络是否能访问腾讯云开发。账号密码错误会显示具体认证错误。'
-            : message;
-        setStatus(displayMessage);
-        throw new Error(displayMessage);
+        setStatus(message);
+        throw error;
       }
     }
 

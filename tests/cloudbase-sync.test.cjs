@@ -16,6 +16,7 @@ let cloudbaseConfig;
 let currentUser = null;
 let failedWrites = 0;
 let failedLogin = null;
+let nativeBridge = null;
 const createMockApp = (config) => {
   cloudbaseConfig = config;
   return {
@@ -80,6 +81,8 @@ beforeEach(() => {
   currentUser = null;
   failedWrites = 0;
   failedLogin = null;
+  nativeBridge = null;
+  delete global.AndroidBridge;
   global.createCloudBaseApp = createMockApp;
 });
 
@@ -139,6 +142,50 @@ test('uses the official email password credential when an email is entered', asy
   assert.deepEqual(credentials, { email: 'sync@example.com', password: 'not-a-real-password' });
   assert.equal(sync.account(), 'sync@example.com');
   assert.deepEqual(JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), { account: 'sync@example.com' });
+});
+
+test('uses the native CloudBase token exchange when Android exposes it', async (t) => {
+  let sync;
+  t.after(() => sync?.disconnect());
+  let sessionInput;
+  nativeBridge = {
+    isNativeCloudBaseLoginConfigured: () => true,
+    cloudBasePasswordLogin: (username, password) => {
+      assert.equal(username, 'sync-user');
+      assert.equal(password, 'not-a-real-password');
+      return JSON.stringify({ configured: true, ok: true, access_token: 'user-access-token', refresh_token: 'refresh-token', user_id: 'user-1' });
+    }
+  };
+  global.AndroidBridge = nativeBridge;
+  const originalCreate = global.createCloudBaseApp;
+  global.createCloudBaseApp = (config) => {
+    const app = originalCreate(config);
+    const baseAuth = app.auth({ persistence: 'local' });
+    app.auth = (options) => ({
+      ...baseAuth,
+      setSession: async (tokens) => {
+        sessionInput = tokens;
+        currentUser = { username: 'sync-user' };
+        return { data: { session: { user: currentUser } }, error: null };
+      }
+    });
+    return app;
+  };
+  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
+  await sync.connect('sync-user', 'not-a-real-password');
+  assert.deepEqual(sessionInput, { access_token: 'user-access-token', refresh_token: 'refresh-token' });
+});
+
+test('shows the CloudBase environment and provider context for rejected credentials', async (t) => {
+  let sync;
+  t.after(() => sync?.disconnect());
+  failedLogin = Object.assign(new Error('Invalid login credentials'), { code: 'invalid_credentials' });
+  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
+
+  await assert.rejects(
+    sync.connect('sync-user', 'not-a-real-password'),
+    /CloudBase 已拒绝用户名登录：Invalid login credentials \[invalid_credentials\].*test-env-123.*腾讯云控制台账号不能直接登录/
+  );
 });
 
 test('resumes a saved session and queues local rows until the first PostgreSQL read', async (t) => {
