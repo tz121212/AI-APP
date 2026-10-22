@@ -354,7 +354,10 @@
     const version = window.AndroidBridge?.getAppVersion?.() || '网页预览版';
     const syncConfigured = Boolean(scheduleSync?.configured);
     root.innerHTML = `<div class="settings-view">
-      <section class="settings-section"><h2>排班同步</h2><p>只同步军、震的休息安排。两台设备使用同一个 CloudBase 账号，应用打开时约每 5 秒检查一次更新；返回应用时会立即同步。</p><p>请使用环境“身份认证”中创建的用户名和密码；腾讯云控制台账号不能直接登录，也不需要填写邮箱。</p><p class="sync-status-line" data-schedule-sync-status aria-live="polite">${escapeHTML(scheduleSyncStatus)}</p><form class="sync-form" id="schedule-sync-form"><label class="field-grow"><span class="field-label">CloudBase 用户名</span><input class="text-field" name="identifier" type="text" autocomplete="username" placeholder="输入 CloudBase 用户名" value="${escapeHTML(scheduleSync?.account() || '')}" required ${syncConfigured ? '' : 'disabled'} /></label><label class="field-grow"><span class="field-label">账号密码</span><input class="text-field" name="password" type="password" autocomplete="current-password" required ${syncConfigured ? '' : 'disabled'} /></label><button class="primary-button" type="submit" ${syncConfigured ? '' : 'disabled'}><i data-lucide="cloud"></i>连接同步</button></form><div class="settings-actions"><button class="secondary-button" type="button" data-action="disconnect-schedule-sync" ${scheduleSync?.account() ? '' : 'disabled'}><i data-lucide="cloud-off"></i>断开同步</button></div></section>
+      <section class="settings-section"><h2>排班同步</h2><p>军、震的休息安排会自动与其他设备共享。连接可用时约每 5 秒检查更新；返回应用时会立即同步。</p>
+        <p class="sync-status-line" data-schedule-sync-status aria-live="polite">${escapeHTML(scheduleSyncStatus)}</p>
+        <div class="settings-actions"><button class="secondary-button" type="button" data-action="refresh-schedule-sync" ${syncConfigured ? '' : 'disabled'}><i data-lucide="refresh-cw"></i>立即同步</button></div>
+      </section>
       <section class="settings-section"><h2>数据备份</h2><p>备忘和待办只保存在当前设备。你可以导出 JSON 文件留存，或从备份文件恢复。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="export"><i data-lucide="download"></i>导出数据</button><button class="secondary-button" type="button" data-action="import"><i data-lucide="upload"></i>导入备份</button></div></section>
       <section class="settings-section"><h2>提醒通知</h2><p>有日期和时间的待办会发送通知并保留到完成或取消；勾选闹钟提醒后会循环响铃。请允许系统通知权限。</p><div class="settings-actions"><button class="secondary-button" type="button" data-action="request-notification"><i data-lucide="bell-ring"></i>开启通知权限</button></div></section>
       <section class="settings-section"><h2>应用更新</h2><p>检查内部发布的 Android 版本。安装更新时，系统会显示安装确认。</p><div class="settings-version"><span>当前版本</span><strong>${escapeHTML(version)}</strong></div><div class="settings-actions"><button class="secondary-button" type="button" data-action="check-update"><i data-lucide="refresh-cw"></i>检查更新</button></div></section>
@@ -362,6 +365,12 @@
     </div>`;
     updateNavigation();
     refreshIcons();
+  }
+
+  function showScheduleSyncError(error) {
+    scheduleSyncStatus = error?.message || scheduleSync?.status() || '无法连接云端';
+    document.querySelectorAll('[data-schedule-sync-status]').forEach((node) => { node.textContent = scheduleSyncStatus; });
+    showToast(scheduleSyncStatus);
   }
 
   function render() {
@@ -642,9 +651,11 @@
           }
           renderCalendar();
         }
-      } else if (action === 'disconnect-schedule-sync') {
-        scheduleSync?.disconnect();
-        showToast('已断开排班同步');
+      } else if (action === 'refresh-schedule-sync') {
+        scheduleSync?.refresh().then((success) => {
+          if (success) showToast('共享排班已更新');
+          else showScheduleSyncError(new Error(scheduleSync?.status() || '共享排班暂不可用'));
+        });
       } else if (action === 'edit-entry') {
         const collection = actionTarget.dataset.kind === 'task' ? state.tasks : state.notes;
         const entry = collection.find((item) => item.id === id);
@@ -695,22 +706,6 @@
   }
 
   document.addEventListener('click', onAction);
-  document.addEventListener('submit', async (event) => {
-    if (event.target.id !== 'schedule-sync-form') return;
-    event.preventDefault();
-    const syncForm = event.target;
-    const submitButton = syncForm.querySelector('[type="submit"]');
-    submitButton.disabled = true;
-    try {
-      await scheduleSync.connect(syncForm.elements.identifier.value, syncForm.elements.password.value);
-      syncForm.elements.password.value = '';
-      showToast('排班同步已连接');
-    } catch (error) {
-      showToast(error.message || scheduleSync.status());
-    } finally {
-      submitButton.disabled = !scheduleSync?.configured;
-    }
-  });
   document.addEventListener('keydown', (event) => {
     const actionable = event.target.closest('[data-action="edit-entry"]');
     if (actionable && (event.key === 'Enter' || event.key === ' ')) {
@@ -760,7 +755,7 @@
     onStatus: (status) => {
       scheduleSyncStatus = status;
       document.querySelectorAll('[data-schedule-sync-status]').forEach((node) => { node.textContent = status; });
-      document.querySelectorAll('[data-action="disconnect-schedule-sync"]').forEach((button) => { button.disabled = !scheduleSync?.account(); });
+      document.querySelectorAll('[data-action="refresh-schedule-sync"]').forEach((button) => { button.disabled = !scheduleSync?.configured; });
     }
   }) || null;
 

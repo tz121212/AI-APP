@@ -188,9 +188,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .settings-section p { max-width: 560px; margin: 0 0 13px; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 .sync-status-line { color: var(--green-dark) !important; }
-.sync-form { display: flex; align-items: end; gap: 10px; max-width: 620px; margin: 0 0 11px; }
-.sync-form .field-label { margin-top: 0; }
-.sync-form .primary-button { flex: none; min-height: 39px; }
 .secondary-button { min-height: 36px; gap: 7px; padding: 0 12px; border: 1px solid #dce4df; border-radius: 5px; background: #fff; color: #425148; font-size: 11px; font-weight: 600; }
 .secondary-button:hover { border-color: #b9cdc2; color: var(--green-dark); }
 .secondary-button svg { width: 15px; height: 15px; }
@@ -301,7 +298,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .calendar-side { padding-top: 16px; border-top: 1px solid var(--line); }
   .agenda-note { margin-top: 16px; }
   .settings-section { padding: 16px 0; }
-  .sync-form { align-items: stretch; flex-direction: column; gap: 0; }
   .editor-dialog { position: fixed; align-self: end; width: 100%; max-width: none; max-height: min(88dvh, 760px); margin: 0; border-width: 1px 0 0; border-radius: 12px 12px 0 0; }
   .editor-form { padding: 20px 20px calc(17px + env(safe-area-inset-bottom)); }
   .toast-region { right: 12px; bottom: calc(78px + env(safe-area-inset-bottom)); left: 12px; }

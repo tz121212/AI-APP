@@ -27,7 +27,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.webkit.WebViewAssetLoader
-import kotlinx.coroutines.runBlocking
 import java.text.SimpleDateFormat
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -40,9 +39,7 @@ class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var assetLoader: WebViewAssetLoader
     private val worker = Executors.newSingleThreadExecutor()
-    private val cloudBaseClient by lazy {
-        CloudBaseClient(BuildConfig.CLOUDBASE_ENV_ID, BuildConfig.CLOUDBASE_ACCESS_TOKEN)
-    }
+    private val scheduleHttp by lazy { CloudBaseScheduleHttp(BuildConfig.CLOUDBASE_PUBLISHABLE_KEY) }
     private var pendingInstallId: Long? = null
     private var pendingUpdateDownload: Pair<String, String>? = null
     @Volatile private var pendingBackup: String? = null
@@ -301,6 +298,23 @@ class MainActivity : Activity() {
 
     inner class AppBridge {
         @JavascriptInterface
+        fun cloudBaseScheduleRequest(id: String, method: String, path: String, headers: String, body: String) {
+            if (id.length > 128) return
+            worker.execute {
+                val result = try {
+                    scheduleHttp.request(method, path, headers, body)
+                } catch (error: Exception) {
+                    JSONObject().put("error", error.message ?: "CloudBase network request failed")
+                }.put("id", id)
+                runOnUiThread {
+                    if (!isDestroyed) webView.evaluateJavascript(
+                        "window.onCloudBaseScheduleResponse && window.onCloudBaseScheduleResponse($result)", null
+                    )
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun getAppVersion(): String = try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.0"
         } catch (_: Exception) {
@@ -332,31 +346,6 @@ class MainActivity : Activity() {
                     if (alarm) requestExactAlarmAccess()
                     toastToWeb("通知权限已开启")
                 }
-            }
-        }
-
-        @JavascriptInterface
-        fun isNativeCloudBaseLoginConfigured(): Boolean = BuildConfig.CLOUDBASE_ACCESS_TOKEN.isNotBlank()
-
-        @JavascriptInterface
-        fun cloudBasePasswordLogin(username: String, password: String): String {
-            if (!isNativeCloudBaseLoginConfigured()) return "{\"configured\":false}"
-            if (username.isBlank() || password.isBlank()) return "{\"ok\":false,\"message\":\"请输入用户名和密码\"}"
-            return try {
-                val tokens = runBlocking { cloudBaseClient.signInWithPassword(username.trim(), password) }
-                JSONObject().apply {
-                    put("configured", true)
-                    put("ok", true)
-                    put("access_token", tokens.accessToken)
-                    put("refresh_token", tokens.refreshToken)
-                    put("user_id", tokens.userId)
-                }.toString()
-            } catch (error: Exception) {
-                JSONObject().apply {
-                    put("configured", true)
-                    put("ok", false)
-                    put("message", error.message ?: "CloudBase 登录失败")
-                }.toString()
             }
         }
 

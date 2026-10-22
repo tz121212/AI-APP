@@ -1,11 +1,10 @@
 (() => {
-  const AUTH_KEY = 'daily-assistant-cloudbase-auth-v1';
   const PENDING_KEY = 'daily-assistant-sync-pending-v1';
   const DEVICE_KEY = 'daily-assistant-sync-device-v1';
   const TABLE = 'schedule_records';
+  const SHARED_OWNER = 'daily-assistant-internal-shared';
   const POLL_INTERVAL_MS = 5000;
   const POLL_OVERLAP_MS = 5000;
-  const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   function createScheduleSync({ config, onRecords, onStatus }) {
     const env = String(config?.env || '').trim();
@@ -15,7 +14,6 @@
     const host = typeof window === 'undefined' ? globalThis : window;
     const documentRef = host.document || globalThis.document;
     let app = null;
-    let auth = null;
     let db = null;
     let pollTimer = null;
     let pollInFlight = null;
@@ -24,9 +22,8 @@
     let hasInitialSnapshot = false;
     let lastUpdatedAt = 0;
     let connected = false;
-    let account = readJSON(AUTH_KEY, {}).account || '';
     let records = {};
-    let status = configured ? '尚未连接云端' : '云端服务尚未配置';
+    let status = configured ? '正在连接共享排班…' : '云端服务尚未配置';
     const deviceId = getDeviceId();
 
     function readJSON(key, fallback) {
@@ -55,8 +52,7 @@
 
     function ensureClient() {
       if (app) return;
-      app = globalThis.createCloudBaseApp({ env, region, accessKey, endPointMode: 'CLOUD_API' });
-      auth = app.auth({ persistence: 'local' });
+      app = globalThis.createCloudBaseApp({ env, region, accessKey, persistence: 'none', endPointMode: 'CLOUD_API' });
       db = app.rdb();
       if (!db) throw new Error('CloudBase PostgreSQL 客户端不可用');
     }
@@ -102,12 +98,11 @@
       });
       if (initial) records = nextRecords;
       else Object.assign(records, nextRecords);
-      const maxUpdatedAt = Object.values(nextRecords).reduce((max, row) => {
+      lastUpdatedAt = Object.values(nextRecords).reduce((max, row) => {
         const value = Date.parse(row.serverUpdatedAt || '');
         return Number.isFinite(value) ? Math.max(max, value) : max;
       }, lastUpdatedAt);
-      lastUpdatedAt = maxUpdatedAt;
-      setStatus(`已连接，排班每 ${POLL_INTERVAL_MS / 1000} 秒检查更新`);
+      setStatus(`共享排班已连接，每 ${POLL_INTERVAL_MS / 1000} 秒检查更新`);
       if (initial) {
         hasInitialSnapshot = true;
         const pending = getPending();
@@ -126,7 +121,7 @@
       if (pollInFlight) return pollInFlight;
       const task = (async () => {
         try {
-          let query = db.from(TABLE).select('*');
+          let query = db.from(TABLE).select('*').eq('owner_id', SHARED_OWNER);
           if (hasInitialSnapshot && lastUpdatedAt > 0) {
             const overlap = new Date(Math.max(0, lastUpdatedAt - POLL_OVERLAP_MS)).toISOString();
             query = query.gte('updated_at', overlap);
@@ -137,66 +132,12 @@
           applySnapshot(normalizeRows(result?.data));
           return true;
         } catch (error) {
-          setStatus(`云端同步暂不可用：${error?.message || '排班仍保存在本机'}`);
+          setStatus(`共享排班读取失败：${error?.message || '网络暂不可用'}`);
           return false;
         }
       })();
       pollInFlight = task.finally(() => { pollInFlight = null; });
       return pollInFlight;
-    }
-
-    async function signIn(value, password) {
-      const identifier = String(value || '').trim();
-      if (!identifier) throw new Error('请输入 CloudBase 邮箱或用户名');
-      ensureClient();
-      const isEmail = EMAIL_PATTERN.test(identifier);
-      const credentials = isEmail
-        ? { email: identifier, password }
-        : { username: identifier, password };
-      let result;
-      const nativeLogin = !isEmail && globalThis.AndroidBridge?.isNativeCloudBaseLoginConfigured?.() && globalThis.AndroidBridge?.cloudBasePasswordLogin;
-      if (nativeLogin) {
-        let nativeResult;
-        try {
-          nativeResult = JSON.parse(globalThis.AndroidBridge.cloudBasePasswordLogin(identifier, password));
-        } catch (error) {
-          throw new Error(`Android 原生 CloudBase 登录响应无效：${error?.message || '未知错误'}`);
-        }
-        if (!nativeResult?.ok) throw loginError({ message: nativeResult?.message || '原生登录失败' }, false);
-        result = await auth.setSession({
-          access_token: nativeResult.access_token,
-          refresh_token: nativeResult.refresh_token
-        });
-      } else {
-        try {
-          result = await auth.signInWithPassword(credentials);
-        } catch (error) {
-          throw loginError(error, isEmail);
-        }
-      }
-      if (result?.error) throw loginError(result.error, isEmail);
-      const session = result?.data?.session;
-      if (!session || session.user?.is_anonymous) throw new Error('CloudBase 登录未建立有效会话。请确认身份认证账号属于当前环境，且对应密码登录方式已启用。');
-      const user = session.user || result?.data?.user;
-      account = identifier;
-      localStorage.setItem(AUTH_KEY, JSON.stringify({ account }));
-      connected = true;
-      startPolling();
-      await refresh();
-    }
-
-    function loginError(error, isEmail) {
-      const message = String(error?.message || '未知认证错误');
-      const code = String(error?.code || error?.category || error?.status || '').trim();
-      const detail = `${message}${code ? ` [${code}]` : ''}`;
-      if (/failed to fetch|networkerror|load failed|cloudbase fetch and xhr failed/i.test(message)) {
-        return new Error(`无法连接 CloudBase 登录服务：${detail}。请检查手机网络是否能访问腾讯云开发。`);
-      }
-      if (/invalid.*(login|credential|password)|invalid_credentials|user.*not.*found|email.*not.*found/i.test(`${code} ${message}`)) {
-        const method = isEmail ? '邮箱' : '用户名';
-        return new Error(`CloudBase 已拒绝${method}登录：${detail}。请使用环境「${env}」的“身份认证”中创建的账号；腾讯云控制台账号不能直接登录。`);
-      }
-      return new Error(`CloudBase 登录失败：${detail}`);
     }
 
     function flushPending() {
@@ -226,6 +167,7 @@
                 continue;
               }
               const result = await db.from(TABLE).upsert({
+                owner_id: SHARED_OWNER,
                 date: record.date,
                 person: record.person,
                 off: record.off,
@@ -236,8 +178,8 @@
               const latest = getPending();
               if (JSON.stringify(latest[key]) === JSON.stringify(record)) delete latest[key];
               savePending(latest);
-            } catch {
-              setStatus('排班已保存在本机，网络恢复后会继续同步');
+            } catch (error) {
+              setStatus(`共享排班写入失败：${error?.message || '网络恢复后会继续同步'}`);
               return;
             }
           }
@@ -269,44 +211,13 @@
       }
       try {
         ensureClient();
-        const result = await auth.getSession();
-        if (result?.error) throw result.error;
-        const session = result?.data?.session;
-        if (!session || session.user?.is_anonymous) {
-          connected = false;
-          setStatus('尚未连接云端');
-          return;
-        }
-        const user = session.user;
-        account = user.username || account || user.email || '';
-        if (account) localStorage.setItem(AUTH_KEY, JSON.stringify({ account }));
         connected = true;
         startPolling();
         await refresh();
       } catch (error) {
         connected = false;
         stopPolling();
-        setStatus(`云端暂不可用：${error?.message || '网络暂不可用，排班仍保存在本机'}`);
-      }
-    }
-
-    async function connect(value, password) {
-      if (!configured) {
-        setStatus('云端服务尚未配置');
-        throw new Error(status);
-      }
-      stopPolling();
-      connected = false;
-      const identifier = String(value || '').trim();
-      setStatus(`正在使用 CloudBase ${EMAIL_PATTERN.test(identifier) ? '邮箱' : '用户名'}密码登录…`);
-      try {
-        await signIn(identifier, password);
-      } catch (error) {
-        connected = false;
-        stopPolling();
-        const message = String(error?.message || '无法连接云端');
-        setStatus(message);
-        throw error;
+        setStatus(`共享排班暂不可用：${error?.message || '请检查网络连接'}`);
       }
     }
 
@@ -315,10 +226,7 @@
       stopPolling();
       hasInitialSnapshot = false;
       lastUpdatedAt = 0;
-      account = '';
-      localStorage.removeItem(AUTH_KEY);
-      try { await auth?.signOut(); } catch {}
-      setStatus(configured ? '已断开云端同步' : '云端服务尚未配置');
+      setStatus(configured ? '共享排班已暂停' : '云端服务尚未配置');
     }
 
     function writeRecord(key, record) {
@@ -352,10 +260,9 @@
 
     return {
       configured,
-      connect,
+      connect: resume,
       disconnect,
       deviceId: () => deviceId,
-      account: () => account,
       flushPending,
       refresh,
       resume,

@@ -28,14 +28,17 @@ python -m http.server 4173
 
 ## 配置排班同步
 
-1. 在 `cloudbase-config.js` 填入 CloudBase PostgreSQL 环境 ID 和地域代码。
-2. 在 CloudBase 身份认证中启用对应的邮箱密码或用户名密码登录方式，并创建 CloudBase 内部共享账号。两台手机使用同一邮箱/用户名及密码；不要把密码写进代码或提交到 GitHub。腾讯云控制台登录账号与 CloudBase 身份认证用户相互独立。
-3. 在 CloudBase CLI 已登录的环境中运行 `tcb db pg migration up -e <环境ID>`，应用 `cloudbase/migrations` 中的排班表和权限迁移。
-4. 安装新的 APK，在两台设备的“设置与备份 → 排班同步”中使用共享账号连接。
+1. 在 `cloudbase-config.js` 填入 CloudBase PostgreSQL 环境 ID、地域代码和客户端 Publishable Key；Android 打包会自动从构建环境注入 Key。
+2. 使用已登录的 CloudBase CLI 运行 `tcb db pg migration up -e <环境ID>`，应用 `cloudbase/migrations` 中的排班表和共享权限迁移。
+3. 安装新版 APK 后打开应用即可同步，无需用户名、密码或短信验证码。“设置与备份 → 排班同步”显示连接状态，也可点击“立即同步”。
 
-本机 Android 构建从未提交的 `.env.local` 读取 `VITE_PUBLISHABLE_KEY` 和 CloudBase 接入指引中的匿名令牌 `CLOUDBASE_ACCESS_TOKEN`。GitHub Actions 构建需要在仓库 Settings → Secrets and variables → Actions 中添加同名 Secret。两个值都用于客户端连接 CloudBase，不授予 service role 权限；排班表另由账号会话和 RLS 隔离。匿名令牌只用于 `/auth/v1/signin` 换取用户会话，不能替代用户名密码。
+客户端通过 CloudBase JS SDK 3.10.3 的 `app.rdb()` 直接使用 Publishable Key 的 `anon` 权限读写排班，不调用登录接口。SDK 使用内存会话配置，避免旧版缓存的失效账号会话影响免登录访问。本机 Android 构建从 Git 忽略的 `.env.local` 读取 `VITE_PUBLISHABLE_KEY`；GitHub Actions 使用同名 Secret。客户端不包含账号密码、管理 API Key 或 service role 密钥。
 
-客户端通过 CloudBase Web JS SDK 3.10.3 的邮箱或用户名密码认证和 PostgreSQL `app.rdb()` 读写排班表，认证请求固定走环境所在地域的 Cloud API，以兼容 Android WebView 的跨域限制。当前 CloudBase PostgreSQL Realtime 尚未正式上线，因此 App 在前台约每 5 秒查询一次，回到前台时立即查询；后台挂起时不保证即时更新。登录密码不会保存，CloudBase SDK 会在本机维护登录会话。登录框中的账号必须是 CloudBase 当前环境“身份认证”里创建的邮箱或用户名，腾讯云控制台账号不能直接登录。首次连接时，本机已有的休息排班会合并到云端。备忘和待办仍只保存在本机。
+Android 的排班请求通过异步原生 HTTPS 桥接发送到官方 PostgreSQL REST API，避免免费套餐不允许添加 WebView 安全域名导致的 CORS 拦截。桥接只接受当前环境排班表的 GET/POST 请求，使用 Publishable Key，保留服务端 HTTP 状态和错误详情。浏览器预览继续使用 SDK 默认网络传输。
+
+所有 App 设备使用固定共享组 `daily-assistant-internal-shared`。数据库仍启用 RLS，仅允许 `anon` 和 `authenticated` 读写该组的排班；表约束限制人员为“军/震”。迁移将原账号排班复制到共享组，同一日期同一人的冲突保留服务端更新时间较新的记录，原账号记录保留在表内但不通过新共享策略暴露。按产品要求，获得 App 客户端配置的设备都能读写共享排班。
+
+当前 CloudBase PostgreSQL Realtime 尚未正式上线，App 在前台约每 5 秒查询一次，回到前台立即查询；后台挂起时不保证即时更新。断网修改会保存在本机队列，网络恢复后自动重试。首次连接会合并本机已有休息排班。备忘和待办只保存在本机。
 
 项目使用 Kotlin 编写 Android 原生容器，界面和业务交互使用 HTML、CSS、JavaScript，WebView 负责承载界面，Gradle Kotlin DSL 负责 Android 构建。
 

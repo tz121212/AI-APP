@@ -1,69 +1,63 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { beforeEach, test } = require('node:test');
 
-const storage = new Map();
-global.localStorage = {
-  getItem: (key) => storage.get(key) ?? null,
-  setItem: (key, value) => storage.set(key, String(value)),
-  removeItem: (key) => storage.delete(key)
-};
-
-const writes = [];
+let storage;
 const remoteRows = new Map();
-let credentials;
+const writes = [];
 let cloudbaseConfig;
-let currentUser = null;
+let failedReads = 0;
 let failedWrites = 0;
-let failedLogin = null;
-let nativeBridge = null;
+let access = 'anon';
+
 const createMockApp = (config) => {
   cloudbaseConfig = config;
   return {
-    auth: (options) => {
-      assert.deepEqual(options, { persistence: 'local' });
-      return {
-        signInWithPassword: async (value) => {
-          credentials = value;
-          if (failedLogin) throw failedLogin;
-          currentUser = { username: 'sync-user', email: 'sync@example.com' };
-          return { data: { user: currentUser, session: { user: currentUser } }, error: null };
-        },
-        getSession: async () => ({ data: { session: currentUser ? { user: currentUser } : null }, error: null }),
-        signOut: async () => { currentUser = null; return { data: {}, error: null }; }
-      };
-    },
     rdb: () => ({
       from: (table) => {
         assert.equal(table, 'schedule_records');
-        return {
-          select: () => ({
-            gte: (field, value) => ({
-              order: async (orderField, options) => {
-                assert.equal(field, 'updated_at');
-                assert.equal(orderField, 'updated_at');
-                assert.deepEqual(options, { ascending: true });
-                return {
-                  data: [...remoteRows.values()].filter((row) => row.updated_at >= value),
-                  error: null
-                };
-              }
-            }),
-            order: async (field, options) => {
-              assert.equal(field, 'updated_at');
-              assert.deepEqual(options, { ascending: true });
-              return { data: [...remoteRows.values()], error: null };
+        const filters = [];
+        let updatedAfter = null;
+        const query = {
+          eq: (field, value) => {
+            filters.push([field, value]);
+            return query;
+          },
+          gte: (field, value) => {
+            assert.equal(field, 'updated_at');
+            updatedAfter = value;
+            return query;
+          },
+          order: async (field, options) => {
+            assert.equal(field, 'updated_at');
+            assert.equal(options.ascending, true);
+            if (failedReads > 0) {
+              failedReads -= 1;
+              throw new Error('read denied');
             }
-          }),
+            return {
+              data: [...remoteRows.values()]
+                .filter((row) => filters.every(([name, value]) => row[name] === value))
+                .filter((row) => !updatedAfter || row.updated_at >= updatedAfter),
+              error: null
+            };
+          }
+        };
+        return {
+          select: () => query,
           upsert: async (record, options) => {
+            assert.equal(access, 'anon');
             if (failedWrites > 0) {
               failedWrites -= 1;
               throw new Error('network unavailable');
             }
-            assert.deepEqual(options, { onConflict: 'owner_id,date,person' });
-            const key = `${record.date}_${record.person}`;
+            assert.equal(options.onConflict, 'owner_id,date,person');
+            const key = `${record.owner_id}_${record.date}_${record.person}`;
+            const row = { ...record, updated_at: new Date(record.client_updated_at).toISOString() };
             writes.push({ key, record });
-            remoteRows.set(key, { ...record, updated_at: new Date(record.client_updated_at).toISOString() });
+            remoteRows.set(key, row);
             return { data: null, error: null };
           }
         };
@@ -73,185 +67,172 @@ const createMockApp = (config) => {
 };
 
 beforeEach(() => {
-  storage.clear();
+  storage = new Map();
   writes.length = 0;
   remoteRows.clear();
-  credentials = null;
   cloudbaseConfig = null;
-  currentUser = null;
+  failedReads = 0;
   failedWrites = 0;
-  failedLogin = null;
-  nativeBridge = null;
-  delete global.AndroidBridge;
-  global.createCloudBaseApp = createMockApp;
+  access = 'anon';
 });
 
-require(path.join(__dirname, '..', 'cloudbase-sync.js'));
-
-test('logs in, reads PostgreSQL schedule rows, and upserts a changed record', async (t) => {
-  let sync;
-  t.after(() => sync?.disconnect());
-  remoteRows.set('2026-10-20_军', {
-    date: '2026-10-20', person: '军', off: true, client_updated_at: 123,
-    updated_at: '2026-10-20T00:00:00.000Z', device_id: 'device-a'
+const syncSource = fs.readFileSync(path.join(__dirname, '..', 'cloudbase-sync.js'), 'utf8');
+function createDevice(options, deviceStorage = storage) {
+  const context = vm.createContext({
+    localStorage: {
+      getItem: (key) => deviceStorage.get(key) ?? null,
+      setItem: (key, value) => deviceStorage.set(key, String(value)),
+      removeItem: (key) => deviceStorage.delete(key)
+    },
+    createCloudBaseApp: createMockApp,
+    setInterval, clearInterval
   });
+  vm.runInContext(syncSource, context);
+  return context.createScheduleSync(options);
+}
+
+test('automatically connects as anonymous and reads the shared schedule without auth APIs', async (t) => {
+  let sync;
   const snapshots = [];
-  sync = global.createScheduleSync({
+  remoteRows.set('daily-assistant-internal-shared_2026-10-20_军', {
+    owner_id: 'daily-assistant-internal-shared',
+    date: '2026-10-20', person: '军', off: true, client_updated_at: 123,
+    updated_at: new Date(123).toISOString(), device_id: 'device-a'
+  });
+  t.after(() => sync?.disconnect());
+  sync = createDevice({
     config: { env: 'test-env-123', region: 'ap-shanghai', accessKey: 'test-publishable-key' },
     onRecords: (records, initial) => snapshots.push({ records, initial })
   });
 
-  await sync.connect(' sync-user ', 'not-a-real-password');
-  assert.deepEqual(cloudbaseConfig, {
-    env: 'test-env-123', region: 'ap-shanghai', accessKey: 'test-publishable-key', endPointMode: 'CLOUD_API'
+  await sync.resume();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(cloudbaseConfig)), {
+    env: 'test-env-123', region: 'ap-shanghai', accessKey: 'test-publishable-key', persistence: 'none', endPointMode: 'CLOUD_API'
   });
-  assert.deepEqual(credentials, { username: 'sync-user', password: 'not-a-real-password' });
-  assert.deepEqual(JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), { account: 'sync-user' });
-  assert.equal('password' in JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), false);
+  assert.equal(typeof createMockApp(cloudbaseConfig).auth, 'undefined');
   assert.equal(snapshots.at(-1).records['2026-10-20_军'].off, true);
   assert.equal(snapshots.at(-1).initial, true);
+  assert.match(sync.status(), /共享排班已连接/);
+});
 
-  sync.writeRecord('2026-10-21_震', { date: '2026-10-21', person: '震', off: true, updatedAt: 456, deviceId: 'device-a' });
-  await sync.flushPending();
-  assert.deepEqual(writes.at(-1), {
-    key: '2026-10-21_震',
-    record: { date: '2026-10-21', person: '震', off: true, client_updated_at: 456, device_id: 'device-a' }
+test('two devices read and write the same shared rows without logging in', async (t) => {
+  const deviceStorageA = new Map();
+  const deviceStorageB = new Map();
+  const snapshotsA = [];
+  const snapshotsB = [];
+  let syncA;
+  let syncB;
+  t.after(async () => {
+    await syncA?.disconnect();
+    await syncB?.disconnect();
   });
-  assert.deepEqual(JSON.parse(storage.get('daily-assistant-sync-pending-v1')), {});
+
+  syncA = createDevice({
+    config: { env: 'test-env-123', accessKey: 'test-publishable-key' },
+    onRecords: (records) => snapshotsA.push(records)
+  }, deviceStorageA);
+  await syncA.resume();
+
+  syncB = createDevice({
+    config: { env: 'test-env-123', accessKey: 'test-publishable-key' },
+    onRecords: (records) => snapshotsB.push(records)
+  }, deviceStorageB);
+  await syncB.resume();
+
+  syncA.writeRecord('2026-10-22_震', {
+    date: '2026-10-22', person: '震', off: true, updatedAt: 456, deviceId: syncA.deviceId()
+  });
+  await syncA.flushPending();
+  await syncB.refresh();
+
+  assert.equal(snapshotsB.at(-1)['2026-10-22_震'].off, true);
+  assert.notEqual(syncA.deviceId(), syncB.deviceId());
+  assert.equal([...remoteRows.values()].length, 1);
+  assert.equal([...remoteRows.values()][0].owner_id, 'daily-assistant-internal-shared');
+  assert.equal(writes.at(-1).record.device_id, syncA.deviceId());
+  assert.equal(deviceStorageA.get('daily-assistant-sync-device-v1'), syncA.deviceId());
+  assert.equal(deviceStorageB.get('daily-assistant-sync-device-v1'), syncB.deviceId());
+  assert.deepEqual(JSON.parse(deviceStorageA.get('daily-assistant-sync-pending-v1')), {});
+  assert.equal(deviceStorageA.has('daily-assistant-cloudbase-auth-v1'), false);
+  assert.equal(deviceStorageB.has('daily-assistant-cloudbase-auth-v1'), false);
 });
 
-test('uses a username login and explains fetch failures as connectivity problems', async (t) => {
+test('queues an unsynced local schedule before its first anonymous database read', async (t) => {
   let sync;
   t.after(() => sync?.disconnect());
-  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
-  await assert.rejects(sync.connect('   ', 'not-a-real-password'), /请输入 CloudBase 邮箱或用户名/);
-  assert.equal(cloudbaseConfig, null);
-
-  failedLogin = new Error('Failed to fetch');
-  await assert.rejects(sync.connect('sync-user', 'not-a-real-password'), /检查手机网络/);
-  assert.deepEqual(credentials, { username: 'sync-user', password: 'not-a-real-password' });
-});
-
-test('uses the official email password credential when an email is entered', async (t) => {
-  let sync;
-  t.after(() => sync?.disconnect());
-  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
-
-  await sync.connect('sync@example.com', 'not-a-real-password');
-
-  assert.deepEqual(credentials, { email: 'sync@example.com', password: 'not-a-real-password' });
-  assert.equal(sync.account(), 'sync@example.com');
-  assert.deepEqual(JSON.parse(storage.get('daily-assistant-cloudbase-auth-v1')), { account: 'sync@example.com' });
-});
-
-test('uses the native CloudBase token exchange when Android exposes it', async (t) => {
-  let sync;
-  t.after(() => sync?.disconnect());
-  let sessionInput;
-  nativeBridge = {
-    isNativeCloudBaseLoginConfigured: () => true,
-    cloudBasePasswordLogin: (username, password) => {
-      assert.equal(username, 'sync-user');
-      assert.equal(password, 'not-a-real-password');
-      return JSON.stringify({ configured: true, ok: true, access_token: 'user-access-token', refresh_token: 'refresh-token', user_id: 'user-1' });
-    }
-  };
-  global.AndroidBridge = nativeBridge;
-  const originalCreate = global.createCloudBaseApp;
-  global.createCloudBaseApp = (config) => {
-    const app = originalCreate(config);
-    const baseAuth = app.auth({ persistence: 'local' });
-    app.auth = (options) => ({
-      ...baseAuth,
-      setSession: async (tokens) => {
-        sessionInput = tokens;
-        currentUser = { username: 'sync-user' };
-        return { data: { session: { user: currentUser } }, error: null };
-      }
-    });
-    return app;
-  };
-  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
-  await sync.connect('sync-user', 'not-a-real-password');
-  assert.deepEqual(sessionInput, { access_token: 'user-access-token', refresh_token: 'refresh-token' });
-});
-
-test('shows the CloudBase environment and provider context for rejected credentials', async (t) => {
-  let sync;
-  t.after(() => sync?.disconnect());
-  failedLogin = Object.assign(new Error('Invalid login credentials'), { code: 'invalid_credentials' });
-  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
-
-  await assert.rejects(
-    sync.connect('sync-user', 'not-a-real-password'),
-    /CloudBase 已拒绝用户名登录：Invalid login credentials \[invalid_credentials\].*test-env-123.*腾讯云控制台账号不能直接登录/
-  );
-});
-
-test('resumes a saved session and queues local rows until the first PostgreSQL read', async (t) => {
-  let sync;
-  t.after(() => sync?.disconnect());
-  currentUser = { username: 'sync-user', email: 'sync@example.com' };
-  storage.set('daily-assistant-cloudbase-auth-v1', JSON.stringify({ account: 'sync-user' }));
   storage.set('daily-assistant-sync-pending-v1', JSON.stringify({
     '2026-10-22_军': { date: '2026-10-22', person: '军', off: true, updatedAt: 800, deviceId: 'device-a' }
   }));
-  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
+  sync = createDevice({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
 
   await sync.resume();
   await sync.flushPending();
-  assert.equal(sync.account(), 'sync-user');
-  assert.equal(writes.at(-1).key, '2026-10-22_军');
-  assert.equal(JSON.parse(storage.get('daily-assistant-sync-pending-v1'))['2026-10-22_军'], undefined);
-});
 
-test('keeps and uploads a newer pending record when the initial PostgreSQL snapshot is empty', async (t) => {
-  let sync;
-  t.after(() => sync?.disconnect());
-  currentUser = { username: 'sync-user', email: 'sync@example.com' };
-  storage.set('daily-assistant-sync-pending-v1', JSON.stringify({
-    '2026-10-22_军': { date: '2026-10-22', person: '军', off: true, updatedAt: 800, deviceId: 'device-a' }
-  }));
-  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
-
-  await sync.resume();
-  await sync.flushPending();
-  assert.equal(writes.at(-1).key, '2026-10-22_军');
+  assert.equal(writes.at(-1).record.owner_id, 'daily-assistant-internal-shared');
   assert.deepEqual(JSON.parse(storage.get('daily-assistant-sync-pending-v1')), {});
 });
 
-test('pulls another device update on the next refresh', async (t) => {
+test('pulls remote changes on the next refresh and applies them to the calendar callback', async (t) => {
   let sync;
-  t.after(() => sync?.disconnect());
   const snapshots = [];
-  sync = global.createScheduleSync({
+  t.after(() => sync?.disconnect());
+  sync = createDevice({
     config: { env: 'test-env-123', accessKey: 'test-publishable-key' },
     onRecords: (records, initial) => snapshots.push({ records, initial })
   });
-  await sync.connect('sync-user', 'not-a-real-password');
-  remoteRows.set('2026-10-23_震', {
+  await sync.resume();
+  remoteRows.set('daily-assistant-internal-shared_2026-10-23_震', {
+    owner_id: 'daily-assistant-internal-shared',
     date: '2026-10-23', person: '震', off: true, client_updated_at: 900,
     updated_at: new Date().toISOString(), device_id: 'device-b'
   });
 
-  await sync.refresh();
+  assert.equal(await sync.refresh(), true);
+
   assert.equal(snapshots.at(-1).records['2026-10-23_震'].off, true);
   assert.equal(snapshots.at(-1).records['2026-10-23_震'].deviceId, 'device-b');
   assert.equal(snapshots.at(-1).initial, false);
 });
 
-test('retains queued records after an upsert failure and retries after a later refresh', async (t) => {
+test('keeps local writes queued and retries after an anonymous database write failure', async (t) => {
   let sync;
   t.after(() => sync?.disconnect());
-  sync = global.createScheduleSync({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
-  await sync.connect('sync-user', 'not-a-real-password');
+  sync = createDevice({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
+  await sync.resume();
   failedWrites = 1;
-  sync.writeRecord('2026-10-24_震', { date: '2026-10-24', person: '震', off: true, updatedAt: 1000, deviceId: 'device-a' });
+  sync.writeRecord('2026-10-24_震', {
+    date: '2026-10-24', person: '震', off: true, updatedAt: 1000, deviceId: sync.deviceId()
+  });
   await sync.flushPending();
+
   assert.equal(JSON.parse(storage.get('daily-assistant-sync-pending-v1'))['2026-10-24_震'].off, true);
+  assert.match(sync.status(), /共享排班写入失败/);
 
   await sync.refresh();
   await sync.flushPending();
-  assert.equal(writes.at(-1).key, '2026-10-24_震');
+
+  assert.equal(writes.at(-1).key, 'daily-assistant-internal-shared_2026-10-24_震');
   assert.deepEqual(JSON.parse(storage.get('daily-assistant-sync-pending-v1')), {});
+});
+
+test('reports anonymous access failures without claiming that syncing connected', async (t) => {
+  let sync;
+  t.after(() => sync?.disconnect());
+  sync = createDevice({ config: { env: 'test-env-123', accessKey: 'test-publishable-key' } });
+  failedReads = 1;
+
+  await sync.resume();
+
+  assert.match(sync.status(), /共享排班读取失败：read denied/);
+});
+
+test('does not attempt a CloudBase request when app configuration is incomplete', async () => {
+  const sync = createDevice({ config: { env: 'test-env-123', accessKey: '' } });
+
+  await sync.resume();
+
+  assert.equal(sync.configured, false);
+  assert.equal(cloudbaseConfig, null);
+  assert.equal(sync.status(), '云端服务尚未配置');
 });
